@@ -5,16 +5,16 @@ model:
   use_fast_tokenizer: true
 
 lora:
-  r: 16
-  lora_alpha: 32
+  r: 64
+  lora_alpha: 128
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-  lora_dropout: 0.05
+  lora_dropout: 0.1
   bias: "none"
   task_type: "CAUSAL_LM"
 
 qlora:
   load_in_4bit: true
-  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_compute_dtype: "bfloat16"
   bnb_4bit_use_double_quant: true
   bnb_4bit_quant_type: "nf4"
 
@@ -24,14 +24,14 @@ training:
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 16
-  learning_rate: 1.5e-4
+  learning_rate: 2e-4
   weight_decay: 0.01
   warmup_steps: 100
   logging_steps: 10
   save_steps: 250
   eval_steps: 250
   save_total_limit: 3
-  fp16: true
+  fp16: false
   dataloader_num_workers: 4
   gradient_checkpointing: true
   optim: "paged_adamw_8bit"

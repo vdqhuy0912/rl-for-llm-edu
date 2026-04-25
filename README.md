@@ -105,6 +105,44 @@ echo 'GEMINI_API_KEY=your_gemini_api_key_here' > .env
 ./scripts/eval_kto.sh
 ```
 
+### Chạy train/eval bằng tmux (khuyến nghị cho job dài)
+```bash
+# tạo session
+tmux new -s rl-train
+
+# trong tmux, chạy tuần tự
+./scripts/workflow.sh train-sft
+./scripts/workflow.sh eval-sft
+./scripts/workflow.sh train-kto
+./scripts/workflow.sh eval-kto
+```
+
+Các lệnh tmux cơ bản:
+```bash
+# tách khỏi session (detach): nhấn Ctrl+b rồi nhấn d
+
+# xem danh sách session
+tmux ls
+
+# vào lại session
+tmux attach -t rl-train
+
+# đóng session khi hoàn tất
+tmux kill-session -t rl-train
+```
+
+Nếu muốn vừa train vừa theo dõi log:
+```bash
+tmux new -s rl-train
+
+# window 1
+./scripts/workflow.sh train-sft
+
+# tạo window mới: Ctrl+b rồi nhấn c
+# window 2
+tail -f logs/train_sft_*.log
+```
+
 ### Cách 3: Dùng dispatcher duy nhất
 ```bash
 ./scripts/workflow.sh download-data

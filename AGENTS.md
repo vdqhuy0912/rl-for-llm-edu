@@ -130,7 +130,8 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
   - `src/cli/run_kto.py`
   - `src/cli/run_eval.py`
 - **Compatibility strategy**:
-  - giữ `scripts/*.py` làm wrapper mỏng để không phá shell scripts và command cũ
+  - shell scripts gọi trực tiếp `python -m src.cli.*`
+  - bỏ hoàn toàn `scripts/*.py` wrappers để giảm duplication
 - **Logging/checkpoint updates**:
   - log file theo logger name trong `logs/`
   - tiếp tục lưu checkpoint theo `save_steps` của Hugging Face/TRL trong `models/...`
@@ -138,6 +139,18 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
 - **Progress bars**:
   - training loops dùng progress bar mặc định của `Trainer`/`KTOTrainer`
   - explicit `disable_tqdm=False` được set mặc định trong code nếu config không override
+
+### ✅ 15. Refactor shell orchestration + cập nhật hướng dẫn tmux
+- **Dispatcher shell**: thêm `scripts/workflow.sh` làm command router cho toàn bộ flow
+  - `download-data`, `preprocess-data`, `split-data`, `train-sft`, `train-kto`
+  - `eval-model`, `eval-sft`, `eval-kto`, `eval-all`, `full-pipeline`
+- **Thin wrappers**: các file `scripts/*.sh` còn lại là alias mỏng gọi về `workflow.sh`
+- **Cleanup**:
+  - xoá thư mục rỗng legacy: `src/sft`, `src/kto`, `src/evaluation`, `data/processed`
+  - xoá `__pycache__` trong các thư mục source/scripts
+- **README updates**:
+  - bổ sung hướng dẫn chạy tuần tự SFT -> eval -> KTO -> eval bằng `workflow.sh`
+  - bổ sung section tmux (attach/detach/list/kill + flow train dài)
 
 ## Technical decisions made
 
@@ -170,8 +183,8 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
 
 ### Execution Layout
 - **Source of truth for Python code**: `src/`
-- **Wrapper layer**: `scripts/*.py` only delegates to `src/cli/*`
-- **Automation layer**: `scripts/*.sh` orchestrates download → preprocess → split → train → eval
+- **Shell dispatcher**: `scripts/workflow.sh` orchestrates download → preprocess → split → train → eval
+- **Convenience layer**: `scripts/*.sh` aliases call into the dispatcher
 
 ## Potential challenges identified
 - **Network/data access**: Một số dataset chưa được download local đầy đủ trong workspace hiện tại
@@ -180,8 +193,8 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
 
 ## Next steps recommended
 1. **Environment setup**: Run `conda env create -f environment.yml`
-2. **KTO preview**: Run `python scripts/preview_kto_data.py` để xem conversion
-3. **Run deterministic split build**: `python3 scripts/process_data.py`
+2. **KTO preview**: Run `python3 -m src.cli.preview_kto_data` để xem conversion
+3. **Run deterministic split build**: `./scripts/workflow.sh preprocess-data && ./scripts/workflow.sh split-data`
 4. **Config tuning**: Adjust hyperparameters based on hardware
 5. **Testing**: Run small-scale tests trước full training
 
@@ -195,7 +208,6 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
   - `src/utils/model_utils.py`
   - `src/cli/*.py`
   - `scripts/*.sh`
-  - `scripts/run_eval.py`
-  - `scripts/preview_kto_data.py`
+  - `scripts/workflow.sh`
 - README.md updated
 - project_plan.md created in session memory
