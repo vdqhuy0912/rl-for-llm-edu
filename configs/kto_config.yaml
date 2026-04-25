@@ -48,7 +48,7 @@ training:
   save_steps: 200
   eval_steps: 200
   save_total_limit: 3
-  fp16: true
+  fp16: false
   dataloader_num_workers: 4
   gradient_checkpointing: true
   optim: "paged_adamw_8bit"
