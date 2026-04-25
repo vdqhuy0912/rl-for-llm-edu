@@ -9,6 +9,7 @@ ANSWER_FIELDS = ("answer", "output", "response", "completion")
 CONTEXT_FIELDS = ("reference", "references", "context")
 INSUFFICIENT_CONTEXT_FIELDS = ("insufficient_context", "insufficial context")
 RAW_DATA_ROOT = Path("data/raw")
+SPLITS_DATA_ROOT = Path("data/splits")
 
 
 def _first_present_value(example: Dict[str, Any], candidates: Iterable[str], default: Any = "") -> Any:
@@ -138,6 +139,13 @@ def load_project_dataset(dataset_name: str, split: str = "train", prefer_local: 
             pass
 
     return load_dataset(dataset_name, split=split)
+
+
+def load_saved_split_dataset(split_name: str, root: Path = SPLITS_DATA_ROOT) -> Dataset:
+    split_dir = root / split_name
+    if not split_dir.exists():
+        raise FileNotFoundError(f"Saved split dataset not found: {split_dir}")
+    return load_from_disk(str(split_dir))
 
 
 def load_hf_datasets(dataset_names: list) -> Dataset:
@@ -291,9 +299,14 @@ def prepare_kto_data(dataset: Dataset, tokenizer: Optional[AutoTokenizer] = None
 
     return Dataset.from_list(kto_data)
 
-def split_dataset(dataset: Dataset, train_ratio: float = 0.8, val_ratio: float = 0.1):
-    """Split dataset into train/val/test."""
-    dataset = dataset.shuffle(seed=42)
+def split_dataset(
+    dataset: Dataset,
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.1,
+    seed: int = 42,
+):
+    """Split dataset into train/val/test with deterministic shuffling."""
+    dataset = dataset.shuffle(seed=seed)
     total_size = len(dataset)
 
     train_size = int(total_size * train_ratio)

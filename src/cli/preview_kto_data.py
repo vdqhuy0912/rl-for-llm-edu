@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
-"""
-Preview the deterministic KTO conversion used in this project.
-"""
+"""Preview the deterministic KTO conversion used in this project."""
 
 import json
-import os
-import sys
 
 from datasets import load_dataset
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.utils.data_utils import prepare_kto_data
 from src.utils.model_utils import load_config
 
 
 def main():
-    config = load_config("./configs/kto_config.yaml")
+    config = load_config("configs/kto_config.yaml")
     source_name = config["data"]["train_dataset"]
 
     dataset = load_dataset(source_name, split="train")

@@ -2,7 +2,7 @@
 
 ## Dự án: RL for LLM Education - Training Loop Qwen 3 8B
 
-### Cập nhật gần nhất: 24/04/2026
+### Cập nhật gần nhất: 25/04/2026
 
 ## Tổng quan nhiệm vụ
 Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline:
@@ -89,8 +89,55 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
   - Classify `(Q, C)` trước theo `CLASS_1/CLASS_2/CLASS_3`
   - Nếu `CLASS_1` dùng `PROMPT_QA_CLASS1`
   - Nếu `CLASS_2` dùng `PROMPT_QA_CLASS2`
-  - File prompt hiện có `PROMPT_QA_CLASSIFIER`, `PROMPT_QA_CLASS1`, `PROMPT_QA_CLASS2`
-  - Nếu `CLASS_3` hiện chỉ lưu classification vì file prompt hiện vẫn chưa có `PROMPT_QA_CLASS3`
+  - File prompt hiện có `PROMPT_QA_CLASSIFIER`, `PROMPT_QA_CLASS1`, `PROMPT_QA_CLASS2`, `PROMPT_QA_CLASS3`
+
+### ✅ 12. Chốt rule split dữ liệu cố định và lưu vào `data/splits/`
+- **Test-only dataset**: `vnu-llm2023-ftdata/1k_finetune_and_200_hus`
+- **TVTS split rule**: `vnu-llm2023-ftdata/620_sampled_QA_TVTS` chia cố định `50/50` cho train/val
+- **Other train datasets**: mỗi dataset còn lại chia cố định `90/10` cho train/val
+- **Determinism**: dùng seed `42` và offset cố định theo dataset để lần nào chạy lại cũng ra cùng split
+- **Artifacts**:
+  - `data/splits/sft_train`
+  - `data/splits/sft_val`
+  - `data/splits/kto_train`
+  - `data/splits/kto_val`
+  - `data/splits/test_only`
+  - `data/splits/split_manifest.json`
+
+### ✅ 13. Thêm orchestration scripts cho toàn bộ pipeline
+- **Shell entrypoints**:
+  - `scripts/download_data.sh`
+  - `scripts/preprocess_data.sh`
+  - `scripts/split_data.sh`
+  - `scripts/train_sft.sh`
+  - `scripts/train_kto.sh`
+  - `scripts/eval_sft.sh`
+  - `scripts/eval_kto.sh`
+  - `scripts/eval_all.sh`
+  - `scripts/full_pipeline.sh`
+- **Evaluation flexibility**:
+  - `scripts/run_eval.py` nhận `--model-path`
+  - `scripts/run_eval.py` nhận `--results-dir`
+  - shell eval scripts tự load `.env` qua `scripts/common.sh`
+
+### ✅ 14. Refactor Python entrypoints vào `src/`
+- **New package**: `src/cli/`
+- **Moved main logic**:
+  - `src/cli/download_data.py`
+  - `src/cli/process_data.py`
+  - `src/cli/preview_kto_data.py`
+  - `src/cli/run_sft.py`
+  - `src/cli/run_kto.py`
+  - `src/cli/run_eval.py`
+- **Compatibility strategy**:
+  - giữ `scripts/*.py` làm wrapper mỏng để không phá shell scripts và command cũ
+- **Logging/checkpoint updates**:
+  - log file theo logger name trong `logs/`
+  - tiếp tục lưu checkpoint theo `save_steps` của Hugging Face/TRL trong `models/...`
+  - lưu thêm final model ở `models/sft_checkpoints/final` và `models/kto_checkpoints/final`
+- **Progress bars**:
+  - training loops dùng progress bar mặc định của `Trainer`/`KTOTrainer`
+  - explicit `disable_tqdm=False` được set mặc định trong code nếu config không override
 
 ## Technical decisions made
 
@@ -121,15 +168,20 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
 - **Flow**: classifier prompt → chọn prompt đánh giá theo class
 - **Output**: JSON + CSV results với classification và judge output thô
 
+### Execution Layout
+- **Source of truth for Python code**: `src/`
+- **Wrapper layer**: `scripts/*.py` only delegates to `src/cli/*`
+- **Automation layer**: `scripts/*.sh` orchestrates download → preprocess → split → train → eval
+
 ## Potential challenges identified
-- **Prompt coverage gap**: File judge hiện chưa có prompt đánh giá chi tiết riêng cho `CLASS_3`
 - **Network/data access**: Một số dataset chưa được download local đầy đủ trong workspace hiện tại
 - **API rate limits**: Gemini evaluation may hit rate limits với large datasets
+- **Environment gap**: một số local env có thể chưa cài package `datasets`, nên `process_data.py` chưa chạy được ngay nếu chưa setup env
 
 ## Next steps recommended
 1. **Environment setup**: Run `conda env create -f environment.yml`
 2. **KTO preview**: Run `python scripts/preview_kto_data.py` để xem conversion
-3. **Prompt completion**: Bổ sung `PROMPT_QA_CLASS3` nếu muốn judge đầy đủ mọi case
+3. **Run deterministic split build**: `python3 scripts/process_data.py`
 4. **Config tuning**: Adjust hyperparameters based on hardware
 5. **Testing**: Run small-scale tests trước full training
 
@@ -140,8 +192,10 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
   - `configs/kto_config.yaml`
   - `configs/eval_config.yaml`
   - `src/utils/data_utils.py`
+  - `src/utils/model_utils.py`
+  - `src/cli/*.py`
+  - `scripts/*.sh`
   - `scripts/run_eval.py`
   - `scripts/preview_kto_data.py`
 - README.md updated
 - project_plan.md created in session memory
-

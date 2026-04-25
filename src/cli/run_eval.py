@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""
-Script to evaluate the trained model using Gemini with the project judge prompts.
-"""
+"""Evaluate a trained model using Gemini with the project judge prompts."""
 
+import argparse
 import json
 import os
 import re
-import sys
 from pathlib import Path
 
 import google.generativeai as genai
@@ -15,10 +13,8 @@ from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.utils.data_utils import build_instruction_prompt, normalize_qa_example
-from src.utils.model_utils import load_config, setup_logging
+from src.utils.data_utils import build_instruction_prompt, load_saved_split_dataset, normalize_qa_example
+from src.utils.model_utils import ensure_output_dir, load_config, resolve_project_path, setup_logging
 
 
 CLASSIFIER_MARKER = 'PROMPT_QA_CLASSIFIER = """'
@@ -33,7 +29,7 @@ def setup_gemini(api_key: str, model_name: str):
 
 
 def load_judge_prompts(prompt_file: str) -> dict:
-    raw_text = Path(prompt_file).read_text(encoding="utf-8")
+    raw_text = resolve_project_path(prompt_file).read_text(encoding="utf-8")
 
     if (
         CLASSIFIER_MARKER not in raw_text
@@ -66,11 +62,7 @@ def render_classifier_prompt(template: str, question: str, context: str) -> str:
 
 
 def render_answer_prompt(template: str, question: str, context: str, answer: str) -> str:
-    return (
-        template.replace("{Q}", question)
-        .replace("{C}", context)
-        .replace("{A_gen}", answer)
-    )
+    return template.replace("{Q}", question).replace("{C}", context).replace("{A_gen}", answer)
 
 
 def classify_question_context(gemini_model, prompts: dict, question: str, context: str) -> dict:
@@ -183,14 +175,21 @@ def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config):
     return evaluations
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model-path", help="Override model path from config.")
+    parser.add_argument("--results-dir", help="Directory to write evaluation outputs.")
+    return parser.parse_args()
+
+
 def main():
-    config = load_config("./configs/eval_config.yaml")
-    logger = setup_logging()
+    args = parse_args()
+    config = load_config("configs/eval_config.yaml")
+    logger = setup_logging(logger_name="eval.gemini")
 
-    logger.info("Starting evaluation...")
-
-    model_path = config["model"]["path"]
-    logger.info(f"Loading model from: {model_path}")
+    logger.info("Starting evaluation")
+    model_path = args.model_path or config["model"]["path"]
+    logger.info("Loading model from: %s", model_path)
 
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
@@ -200,8 +199,12 @@ def main():
     )
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
-    test_dataset = load_dataset(config["evaluation"]["test_dataset"], split="train")
-    logger.info(f"Loaded test dataset with {len(test_dataset)} samples")
+    try:
+        test_dataset = load_saved_split_dataset("test_only")
+        logger.info("Loaded deterministic test split with %s samples", len(test_dataset))
+    except Exception:
+        test_dataset = load_dataset(config["evaluation"]["test_dataset"], split="train")
+        logger.info("Loaded test dataset with %s samples", len(test_dataset))
 
     responses = generate_responses(model, tokenizer, test_dataset, config)
 
@@ -213,9 +216,7 @@ def main():
     prompt_bundle = load_judge_prompts(config["metrics"]["prompt_file"])
     evaluations = evaluate_with_gemini(gemini_model, responses, prompt_bundle, config)
 
-    results_dir = Path("./results")
-    results_dir.mkdir(parents=True, exist_ok=True)
-
+    results_dir = ensure_output_dir(args.results_dir or "./results")
     json_path = results_dir / "evaluation_results.json"
     csv_path = results_dir / "evaluation_results.csv"
 
@@ -223,8 +224,7 @@ def main():
         json.dump(evaluations, file, ensure_ascii=False, indent=2)
 
     pd.DataFrame(evaluations).to_csv(csv_path, index=False, encoding="utf-8")
-
-    logger.info(f"Evaluation completed. Results saved to {json_path}")
+    logger.info("Evaluation completed. Results saved to %s", json_path)
     print(f"Evaluated {len(evaluations)} samples")
     print(f"Results saved to: {json_path}")
 
