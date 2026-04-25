@@ -9,11 +9,15 @@ from pathlib import Path
 
 import google.generativeai as genai
 import pandas as pd
-from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
-from src.utils.data_utils import build_instruction_prompt, load_saved_split_dataset, normalize_qa_example
+from src.utils.data_utils import (
+    build_instruction_prompt,
+    load_project_dataset,
+    load_saved_split_dataset,
+    normalize_qa_example,
+)
 from src.utils.model_utils import ensure_output_dir, load_config, resolve_project_path, setup_logging
 
 
@@ -80,6 +84,7 @@ def classify_question_context(gemini_model, prompts: dict, question: str, contex
 
 
 def generate_responses(model, tokenizer, dataset, config):
+    system_prompt = config.get("prompt", {}).get("system_prompt")
     generator = pipeline(
         "text-generation",
         model=model,
@@ -95,7 +100,11 @@ def generate_responses(model, tokenizer, dataset, config):
 
     for index in tqdm(range(num_samples), desc="Generating responses"):
         example = normalize_qa_example(dataset[index])
-        prompt = build_instruction_prompt(example["question"], example["context"])
+        prompt = build_instruction_prompt(
+            example["question"],
+            example["context"],
+            system_prompt=system_prompt,
+        )
 
         try:
             generated = generator(prompt)[0]["generated_text"]
@@ -179,12 +188,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", help="Override model path from config.")
     parser.add_argument("--results-dir", help="Directory to write evaluation outputs.")
+    parser.add_argument("--split-name", help="Saved split name to use for generation/evaluation.")
+    parser.add_argument("--num-samples", type=int, help="Override number of samples to generate/evaluate.")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     config = load_config("configs/eval_config.yaml")
+    if args.num_samples is not None:
+        config["evaluation"]["num_samples"] = args.num_samples
     logger = setup_logging(logger_name="eval.gemini")
 
     logger.info("Starting evaluation")
@@ -199,11 +212,16 @@ def main():
     )
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
+    split_name = args.split_name or config["evaluation"].get("split_name", "test_only")
     try:
-        test_dataset = load_saved_split_dataset("test_only")
-        logger.info("Loaded deterministic test split with %s samples", len(test_dataset))
+        test_dataset = load_saved_split_dataset(split_name)
+        logger.info("Loaded deterministic split %s with %s samples", split_name, len(test_dataset))
     except Exception:
-        test_dataset = load_dataset(config["evaluation"]["test_dataset"], split="train")
+        test_dataset = load_project_dataset(
+            config["evaluation"]["test_dataset"],
+            split=config["evaluation"].get("source_split", "test"),
+            prefer_local=True,
+        )
         logger.info("Loaded test dataset with %s samples", len(test_dataset))
 
     responses = generate_responses(model, tokenizer, test_dataset, config)

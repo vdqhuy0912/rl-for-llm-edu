@@ -3,9 +3,7 @@
 
 import json
 
-from datasets import load_dataset
-
-from src.utils.data_utils import prepare_kto_data
+from src.utils.data_utils import load_project_dataset, prepare_kto_data
 from src.utils.model_utils import load_config
 
 
@@ -13,7 +11,7 @@ def main():
     config = load_config("configs/kto_config.yaml")
     source_name = config["data"]["train_dataset"]
 
-    dataset = load_dataset(source_name, split="train")
+    dataset = load_project_dataset(source_name, split="train", prefer_local=True)
     kto_dataset = prepare_kto_data(dataset)
 
     print(f"Source dataset: {source_name}")

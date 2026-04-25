@@ -1,15 +1,22 @@
+import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-from datasets import Dataset, concatenate_datasets, load_dataset, load_from_disk
+from datasets import Dataset, DatasetDict, concatenate_datasets, load_dataset, load_from_disk
 from transformers import AutoTokenizer
 
 QUESTION_FIELDS = ("question", "input", "prompt", "query")
 ANSWER_FIELDS = ("answer", "output", "response", "completion")
 CONTEXT_FIELDS = ("reference", "references", "context")
 INSUFFICIENT_CONTEXT_FIELDS = ("insufficient_context", "insufficial context")
+SPLIT_FILE_CANDIDATES = {
+    "train": ("train.jsonl", "train.json"),
+    "validation": ("validation.jsonl", "validation.json", "val.jsonl", "val.json"),
+    "test": ("test.jsonl", "test.json"),
+}
 RAW_DATA_ROOT = Path("data/raw")
 SPLITS_DATA_ROOT = Path("data/splits")
+HF_DATASETS_CACHE = RAW_DATA_ROOT / "_hf_cache"
 
 
 def _first_present_value(example: Dict[str, Any], candidates: Iterable[str], default: Any = "") -> Any:
@@ -56,9 +63,16 @@ def normalize_qa_example(example: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def build_instruction_prompt(question: str, context: Optional[str] = None) -> str:
+def build_instruction_prompt(
+    question: str,
+    context: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+) -> str:
     """Build a stable prompt format shared by SFT, KTO and evaluation."""
-    prompt = "### Câu hỏi\n" + question.strip()
+    prompt = ""
+    if system_prompt:
+        prompt += "### Chỉ dẫn hệ thống\n" + system_prompt.strip() + "\n\n"
+    prompt += "### Câu hỏi\n" + question.strip()
     if context:
         prompt += "\n\n### Ngữ cảnh tham chiếu\n" + context.strip()
     prompt += "\n\n### Trả lời\n"
@@ -69,31 +83,50 @@ def dataset_name_to_local_dir(dataset_name: str, root: Path = RAW_DATA_ROOT) -> 
     return root / dataset_name.replace("/", "_")
 
 
-def _load_dataset_from_raw_files(raw_dir: Path) -> Dataset:
-    json_files = sorted(raw_dir.glob("*.json"))
-    jsonl_files = sorted(raw_dir.glob("*.jsonl"))
-
-    if jsonl_files:
-        return load_dataset("json", data_files=[str(path) for path in jsonl_files], split="train")
-    if json_files:
-        return load_dataset("json", data_files=[str(path) for path in json_files], split="train")
-
-    raise FileNotFoundError(f"No JSON/JSONL raw files found in {raw_dir}")
+def _resolve_raw_split_file(raw_dir: Path, split: str) -> Path:
+    for candidate in SPLIT_FILE_CANDIDATES.get(split, ()):
+        path = raw_dir / candidate
+        if path.exists():
+            return path
+    raise FileNotFoundError(f"No raw file found for split '{split}' in {raw_dir}")
 
 
-def load_local_dataset(dataset_name: str, root: Path = RAW_DATA_ROOT) -> Dataset:
-    """Load a dataset from local disk, regardless of whether it was saved_to_disk or as raw files."""
+def _load_dataset_from_raw_files(raw_dir: Path, split: str = "train") -> Dataset:
+    split_file = _resolve_raw_split_file(raw_dir, split)
+    rows = []
+    with split_file.open(encoding="utf-8") as file:
+        for line_no, line in enumerate(file, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(normalize_qa_example(json.loads(line)))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid JSON in {split_file} at line {line_no}: {exc}") from exc
+    return Dataset.from_list(rows)
+
+
+def load_local_dataset(dataset_name: str, split: str = "train", root: Path = RAW_DATA_ROOT) -> Dataset:
+    """Load one split from local disk, regardless of whether the dataset was saved as Dataset or DatasetDict."""
     dataset_dir = dataset_name_to_local_dir(dataset_name, root=root)
     if not dataset_dir.exists():
         raise FileNotFoundError(f"Local dataset directory not found: {dataset_dir}")
 
     try:
-        return load_from_disk(str(dataset_dir))
+        loaded = load_from_disk(str(dataset_dir))
     except Exception:
         raw_dir = dataset_dir / "raw_files"
         if raw_dir.exists():
-            return _load_dataset_from_raw_files(raw_dir)
+            return _load_dataset_from_raw_files(raw_dir, split=split)
         raise
+
+    if isinstance(loaded, DatasetDict):
+        if split not in loaded:
+            raise KeyError(f"Split '{split}' not found in local dataset {dataset_name}. Available: {list(loaded.keys())}")
+        return loaded[split]
+    if split != "train":
+        raise KeyError(f"Local dataset {dataset_name} only contains one split; requested '{split}'.")
+    return loaded
 
 
 def save_processed_local_dataset(dataset_name: str, output_root: Path = RAW_DATA_ROOT) -> Path:
@@ -103,7 +136,16 @@ def save_processed_local_dataset(dataset_name: str, output_root: Path = RAW_DATA
     if not raw_dir.exists():
         return dataset_dir
 
-    dataset = _load_dataset_from_raw_files(raw_dir)
+    split_map = {}
+    for split in SPLIT_FILE_CANDIDATES:
+        try:
+            split_map[split] = _load_dataset_from_raw_files(raw_dir, split=split)
+        except FileNotFoundError:
+            continue
+    if not split_map:
+        raise FileNotFoundError(f"No recognized raw split files found in {raw_dir}")
+
+    dataset = DatasetDict(split_map)
     temp_dir = dataset_dir / "_normalized_tmp"
     if temp_dir.exists():
         import shutil
@@ -129,12 +171,9 @@ def save_processed_local_dataset(dataset_name: str, output_root: Path = RAW_DATA
 
 def load_project_dataset(dataset_name: str, split: str = "train", prefer_local: bool = True) -> Dataset:
     """Load dataset with local-first behavior and remote fallback."""
-    if split != "train":
-        raise ValueError("This project currently supports only the train split for dataset loading.")
-
     if prefer_local:
         try:
-            return load_local_dataset(dataset_name)
+            return load_local_dataset(dataset_name, split=split)
         except Exception:
             pass
 
@@ -148,25 +187,30 @@ def load_saved_split_dataset(split_name: str, root: Path = SPLITS_DATA_ROOT) -> 
     return load_from_disk(str(split_dir))
 
 
-def load_hf_datasets(dataset_names: list) -> Dataset:
-    """Load and concatenate multiple Hugging Face datasets."""
+def load_hf_datasets(dataset_names: list, split: str = "train") -> Dataset:
+    """Load and concatenate multiple Hugging Face datasets from the same split."""
     datasets = []
     for name in dataset_names:
         try:
-            dataset = load_project_dataset(name, split="train", prefer_local=True)
+            dataset = load_project_dataset(name, split=split, prefer_local=True)
             datasets.append(dataset)
-            print(f"Loaded dataset: {name} with {len(dataset)} samples")
+            print(f"Loaded dataset: {name}:{split} with {len(dataset)} samples")
         except Exception as e:
-            print(f"Error loading {name}: {e}")
+            print(f"Error loading {name}:{split}: {e}")
 
     if datasets:
         combined_dataset = concatenate_datasets(datasets)
-        print(f"Total combined dataset size: {len(combined_dataset)}")
+        print(f"Total combined dataset size for split '{split}': {len(combined_dataset)}")
         return combined_dataset
     else:
         raise ValueError("No datasets could be loaded")
 
-def preprocess_sft_data(dataset: Dataset, tokenizer: AutoTokenizer, max_length: int = 2048):
+def preprocess_sft_data(
+    dataset: Dataset,
+    tokenizer: AutoTokenizer,
+    max_length: int = 2048,
+    system_prompt: Optional[str] = None,
+):
     """Preprocess data for SFT training."""
 
     def tokenize_function(examples):
@@ -179,6 +223,7 @@ def preprocess_sft_data(dataset: Dataset, tokenizer: AutoTokenizer, max_length: 
                 build_instruction_prompt(
                     normalized["question"],
                     normalized["context"],
+                    system_prompt=system_prompt,
                 )
                 + normalized["answer"]
             )
@@ -257,7 +302,11 @@ def _build_undesirable_completion(normalized: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
-def prepare_kto_data(dataset: Dataset, tokenizer: Optional[AutoTokenizer] = None) -> Dataset:
+def prepare_kto_data(
+    dataset: Dataset,
+    tokenizer: Optional[AutoTokenizer] = None,
+    system_prompt: Optional[str] = None,
+) -> Dataset:
     """Prepare KTO data by converting QA samples into positive/negative preference rows."""
     kto_data = []
 
@@ -269,6 +318,7 @@ def prepare_kto_data(dataset: Dataset, tokenizer: Optional[AutoTokenizer] = None
         prompt = build_instruction_prompt(
             normalized["question"],
             normalized["context"],
+            system_prompt=system_prompt,
         )
         negative = _build_undesirable_completion(normalized)
 
@@ -298,23 +348,3 @@ def prepare_kto_data(dataset: Dataset, tokenizer: Optional[AutoTokenizer] = None
         )
 
     return Dataset.from_list(kto_data)
-
-def split_dataset(
-    dataset: Dataset,
-    train_ratio: float = 0.8,
-    val_ratio: float = 0.1,
-    seed: int = 42,
-):
-    """Split dataset into train/val/test with deterministic shuffling."""
-    dataset = dataset.shuffle(seed=seed)
-    total_size = len(dataset)
-
-    train_size = int(total_size * train_ratio)
-    val_size = int(total_size * val_ratio)
-    test_size = total_size - train_size - val_size
-
-    train_dataset = dataset.select(range(train_size))
-    val_dataset = dataset.select(range(train_size, train_size + val_size))
-    test_dataset = dataset.select(range(train_size + val_size, total_size))
-
-    return train_dataset, val_dataset, test_dataset

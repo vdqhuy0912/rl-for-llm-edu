@@ -65,7 +65,7 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
 ### ✅ 10. Chuẩn hóa lại dữ liệu và thiết kế bước chuyển đổi KTO
 - **Observed schema thực tế**:
   - Hầu hết dataset dùng `question`, `answer`, `reference`
-  - `620_sampled_QA_TVTS` dùng `references` và cờ `insufficial context` (lệch chính tả so với các dataset khác)
+  - Dataset RL tổng hợp có thể chứa biến thể `references` và cờ `insufficial context` bên cạnh schema chuẩn
 - **Normalization strategy**:
   - Chuẩn hóa về các field chung: `question`, `answer`, `context`, `insufficient_context`, `multi_intent`
   - Dùng chung prompt format:
@@ -92,23 +92,23 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
   - File prompt hiện có `PROMPT_QA_CLASSIFIER`, `PROMPT_QA_CLASS1`, `PROMPT_QA_CLASS2`, `PROMPT_QA_CLASS3`
 
 ### ✅ 12. Chốt rule split dữ liệu cố định và lưu vào `data/splits/`
-- **Test-only dataset**: `vnu-llm2023-ftdata/1k_finetune_and_200_hus`
-- **TVTS split rule**: `vnu-llm2023-ftdata/620_sampled_QA_TVTS` chia cố định `50/50` cho train/val
-- **Other train datasets**: mỗi dataset còn lại chia cố định `90/10` cho train/val
-- **Determinism**: dùng seed `42` và offset cố định theo dataset để lần nào chạy lại cũng ra cùng split
+- **SFT source**: `vnu-llm2023-ftdata/qa-daotao-sft`, dùng trực tiếp các split có sẵn
+  `train` -> `sft_train`, `validation` -> `sft_val`, `test` -> `test_only`
+- **KTO train source**: `vnu-llm2023-ftdata/qa-daotao-cho-rl`, dùng trực tiếp các split có sẵn
+  `train` -> `kto_train`, `validation` -> `kto_val`, `test` -> `kto_test`
 - **Artifacts**:
   - `data/splits/sft_train`
   - `data/splits/sft_val`
   - `data/splits/kto_train`
   - `data/splits/kto_val`
+  - `data/splits/kto_test`
   - `data/splits/test_only`
   - `data/splits/split_manifest.json`
 
 ### ✅ 13. Thêm orchestration scripts cho toàn bộ pipeline
 - **Shell entrypoints**:
   - `scripts/download_data.sh`
-  - `scripts/preprocess_data.sh`
-  - `scripts/split_data.sh`
+  - `scripts/prepare_data.sh`
   - `scripts/train_sft.sh`
   - `scripts/train_kto.sh`
   - `scripts/eval_sft.sh`
@@ -124,7 +124,7 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
 - **New package**: `src/cli/`
 - **Moved main logic**:
   - `src/cli/download_data.py`
-  - `src/cli/process_data.py`
+  - `src/cli/prepare_data.py`
   - `src/cli/preview_kto_data.py`
   - `src/cli/run_sft.py`
   - `src/cli/run_kto.py`
@@ -142,7 +142,7 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
 
 ### ✅ 15. Refactor shell orchestration + cập nhật hướng dẫn tmux
 - **Dispatcher shell**: thêm `scripts/workflow.sh` làm command router cho toàn bộ flow
-  - `download-data`, `preprocess-data`, `split-data`, `train-sft`, `train-kto`
+  - `download-data`, `prepare-data`, `train-sft`, `train-kto`
   - `eval-model`, `eval-sft`, `eval-kto`, `eval-all`, `full-pipeline`
 - **Thin wrappers**: các file `scripts/*.sh` còn lại là alias mỏng gọi về `workflow.sh`
 - **Cleanup**:
@@ -151,6 +151,27 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
 - **README updates**:
   - bổ sung hướng dẫn chạy tuần tự SFT -> eval -> KTO -> eval bằng `workflow.sh`
   - bổ sung section tmux (attach/detach/list/kill + flow train dài)
+
+### ✅ 16. Thêm `system_prompt` dùng chung cho train/inference
+- **Config location**:
+  - `configs/sft_config.yaml` -> `prompt.system_prompt`
+  - `configs/kto_config.yaml` -> `prompt.system_prompt`
+  - `configs/eval_config.yaml` -> `prompt.system_prompt`
+- **Prompt format update**:
+  - `src/utils/data_utils.py::build_instruction_prompt()` thêm block `### Chỉ dẫn hệ thống`
+  - SFT preprocessing, KTO conversion, và eval inference đều truyền `system_prompt` từ config
+- **System prompt intent**:
+  - trợ lý tư vấn tuyển sinh và đào tạo đại học
+  - trả lời chính xác, ngắn gọn, bám sát context
+  - nếu context thiếu thì nói rõ phần thiếu và không bịa dữ kiện
+
+### ✅ 17. Tách KTO train và KTO inference data
+- **Training**: `scripts/workflow.sh train-kto` dùng `data/splits/kto_train` từ dataset RL tổng hợp
+- **Inference/judge sau KTO**: `scripts/workflow.sh eval-kto` dùng `data/splits/kto_test`
+- **Eval compatibility**: `data/splits/test_only` lấy trực tiếp từ split `test` của dataset SFT
+- **Eval CLI update**:
+  - `src.cli.run_eval` nhận thêm `--split-name`
+  - `src.cli.run_eval` nhận thêm `--num-samples`
 
 ## Technical decisions made
 
@@ -163,15 +184,10 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
 
 ### Data Pipeline
 - **HuggingFace Datasets**:
-  - Train:
-    - `vnu-llm2023-ftdata/8k_crawl_web_uet`
-    - `vnu-llm2023-ftdata/1700_du_lieu_quy_che_DT`
-    - `vnu-llm2023-ftdata/500_tuyen_sinh_chinh_sua`
-    - `vnu-llm2023-ftdata/1597_out_hus_qa_final`
-  - Test:
-    - `vnu-llm2023-ftdata/1k_finetune_and_200_hus`
-  - Auxiliary split / KTO source:
-    - `vnu-llm2023-ftdata/620_sampled_QA_TVTS`
+  - SFT:
+    - `vnu-llm2023-ftdata/qa-daotao-sft`
+  - RL/KTO/DPO:
+    - `vnu-llm2023-ftdata/qa-daotao-cho-rl`
 - **Preprocessing**: Tokenization + unified QA/context formatting
 - **KTO Format**: Không còn giả định có sẵn pair; chuyển đổi từ QA sang positive/negative rows bằng heuristic có ghi metadata
 
@@ -189,12 +205,12 @@ Thiết kế và setup dự án training loop cho model Qwen 3 8B với pipeline
 ## Potential challenges identified
 - **Network/data access**: Một số dataset chưa được download local đầy đủ trong workspace hiện tại
 - **API rate limits**: Gemini evaluation may hit rate limits với large datasets
-- **Environment gap**: một số local env có thể chưa cài package `datasets`, nên `process_data.py` chưa chạy được ngay nếu chưa setup env
+- **Environment gap**: một số local env có thể chưa cài package `datasets`, nên `prepare_data.py` chưa chạy được ngay nếu chưa setup env
 
 ## Next steps recommended
 1. **Environment setup**: Run `conda env create -f environment.yml`
 2. **KTO preview**: Run `python3 -m src.cli.preview_kto_data` để xem conversion
-3. **Run deterministic split build**: `./scripts/workflow.sh preprocess-data && ./scripts/workflow.sh split-data`
+3. **Prepare project splits**: `./scripts/workflow.sh prepare-data`
 4. **Config tuning**: Adjust hyperparameters based on hardware
 5. **Testing**: Run small-scale tests trước full training
 

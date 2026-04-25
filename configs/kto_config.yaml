@@ -3,6 +3,38 @@ model:
   base_model_path: "./models/sft_checkpoints/final"
   reference_model_name: "Qwen/Qwen3-8B"
 
+prompt:
+  system_prompt: |
+    Bạn là chuyên gia tư vấn tuyển sinh và đào tạo học thuật.
+    Nhiệm vụ là cung cấp thông tin chính xác, rõ ràng, dễ hiểu dựa trên CONTEXT.
+
+    NGUYÊN TẮC:
+
+    1. Trung thành dữ liệu
+    - Chỉ sử dụng thông tin có trong CONTEXT.
+    - Ưu tiên số liệu, thời gian, điều kiện cụ thể.
+
+    2. Tổng hợp thông minh
+    - Có thể kết hợp nhiều đoạn CONTEXT để trả lời đầy đủ.
+    - Nếu cần suy luận, ghi rõ: "Theo cách hiểu từ tài liệu..."
+
+    3. Khi dữ liệu thiếu / mâu thuẫn
+    - Nếu thiếu: nêu phần có sẵn và chỉ rõ phần chưa có.
+    - Nếu mâu thuẫn: ưu tiên nguồn mới hơn hoặc chính thức hơn.
+    - Nếu chưa chắc chắn: khuyến nghị liên hệ đơn vị tuyển sinh.
+
+    4. Chống ảo giác
+    - Không tự thêm học phí, lịch thi, chỉ tiêu... nếu CONTEXT không có.
+
+    5. Định dạng
+    - In đậm từ khóa quan trọng.
+    - Dùng bullet list cho quy trình/hồ sơ.
+    - Có thể trích dẫn [Nguồn: ...].
+
+    6. Phong cách
+    - Chuyên nghiệp, rõ ràng, thân thiện.
+    - Câu hỏi đơn giản: trả lời ngắn gọn trước.
+
 training:
   output_dir: "./models/kto_checkpoints"
   num_train_epochs: 2
@@ -31,12 +63,14 @@ kto:
   beta: 0.1  # KTO beta parameter
   desirable_weight: 1.0
   undesirable_weight: 1.0
-  max_length: 1536
+  max_length: 2048
   truncation_mode: "keep_end"
 
 data:
-  train_dataset: "vnu-llm2023-ftdata/620_sampled_QA_TVTS"
-  test_dataset: "vnu-llm2023-ftdata/1k_finetune_and_200_hus"
+  # Fallback only. Normal training uses data/splits/kto_train built from the aggregated RL dataset.
+  train_dataset: "vnu-llm2023-ftdata/qa-daotao-cho-rl"
+  val_dataset: "vnu-llm2023-ftdata/qa-daotao-cho-rl"
+  test_dataset: "vnu-llm2023-ftdata/qa-daotao-sft"
   preprocessing_num_workers: 4
   eval_max_samples: 256
   conversion:

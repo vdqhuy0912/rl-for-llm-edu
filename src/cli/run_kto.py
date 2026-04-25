@@ -11,24 +11,25 @@ from src.utils.model_utils import ensure_output_dir, load_config, resolve_projec
 
 
 def load_train_and_eval_datasets(config: dict, tokenizer):
+    system_prompt = config.get("prompt", {}).get("system_prompt")
     try:
         train_dataset = load_saved_split_dataset("kto_train")
         train_size = len(train_dataset)
     except Exception:
         train_dataset = load_project_dataset(config["data"]["train_dataset"], split="train", prefer_local=True)
         train_size = len(train_dataset)
-    train_dataset = prepare_kto_data(train_dataset, tokenizer)
+    train_dataset = prepare_kto_data(train_dataset, tokenizer, system_prompt=system_prompt)
 
     try:
         eval_dataset = load_saved_split_dataset("kto_val")
     except Exception:
-        eval_dataset = load_project_dataset(config["data"]["test_dataset"], split="train", prefer_local=True)
+        eval_dataset = load_project_dataset(config["data"]["val_dataset"], split="validation", prefer_local=True)
 
     eval_max_samples = config["data"].get("eval_max_samples")
     if eval_max_samples:
         eval_dataset = eval_dataset.select(range(min(eval_max_samples, len(eval_dataset))))
     eval_size = len(eval_dataset)
-    eval_dataset = prepare_kto_data(eval_dataset, tokenizer)
+    eval_dataset = prepare_kto_data(eval_dataset, tokenizer, system_prompt=system_prompt)
     return train_dataset, eval_dataset, train_size, eval_size
 
 

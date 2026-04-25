@@ -36,38 +36,38 @@ rl-for-llm-edu/
 
 ## Nguồn dữ liệu
 
-### Training Data
-- `vnu-llm2023-ftdata/8k_crawl_web_uet`: 8k samples crawled web data
-- `vnu-llm2023-ftdata/1700_du_lieu_quy_che_DT`: 1700 legal/regulatory data
-- `vnu-llm2023-ftdata/500_tuyen_sinh_chinh_sua`: 500 admission data
-- `vnu-llm2023-ftdata/1597_out_hus_qa_final`: 1597 HUS Q&A data
-
-### Test Data
-- `vnu-llm2023-ftdata/1k_finetune_and_200_hus`: 1k finetune + 200 HUS samples
-
-### Mixed Data
-- `vnu-llm2023-ftdata/620_sampled_QA_TVTS`: 620 sampled Q&A dùng để tách train/val cho KTO và bổ sung train/val cho SFT
+- `vnu-llm2023-ftdata/qa-daotao-sft`: dataset tổng hợp dùng cho SFT
+- `vnu-llm2023-ftdata/qa-daotao-cho-rl`: dataset tổng hợp dùng cho RL/KTO/DPO
 
 ## Quy tắc chia dữ liệu
 
-- `vnu-llm2023-ftdata/1k_finetune_and_200_hus` chỉ dùng làm test set.
-- `vnu-llm2023-ftdata/620_sampled_QA_TVTS` được chia cố định `50/50` cho train và val.
-- Các dataset train còn lại được chia cố định `90/10` cho train và val.
-- Tất cả split dùng seed cố định nên chạy lại vẫn ra cùng kết quả.
+- Mỗi dataset trên Hugging Face đã có sẵn `train` / `validation` / `test`.
+- `prepare_data.py` không tự chia lại dữ liệu nữa, mà mirror trực tiếp các split sẵn có vào `data/splits/`.
+- `qa-daotao-sft/train` -> `sft_train`
+- `qa-daotao-sft/validation` -> `sft_val`
+- `qa-daotao-sft/test` -> `test_only`
+- `qa-daotao-cho-rl/train` -> `kto_train`
+- `qa-daotao-cho-rl/validation` -> `kto_val`
+- `qa-daotao-cho-rl/test` -> `kto_test`
 
 Chạy bước chuẩn hóa và tạo split:
 ```bash
-./scripts/preprocess_data.sh
-./scripts/split_data.sh
+./scripts/prepare_data.sh
 ```
+
+Ý nghĩa:
+- `prepare-data`: materialize, verify, mirror các split local từ `data/raw` vào `data/splits/`
 
 Kết quả được lưu trong `data/splits/`:
 - `sft_train`
 - `sft_val`
 - `kto_train`
 - `kto_val`
+- `kto_test`
 - `test_only`
 - `split_manifest.json`
+
+`kto_train` được dùng để train KTO. `kto_test` được dùng khi chạy `eval-kto`.
 
 ## Cài đặt
 
@@ -97,8 +97,7 @@ echo 'GEMINI_API_KEY=your_gemini_api_key_here' > .env
 ### Cách 2: Chạy từng bước bằng shell scripts
 ```bash
 ./scripts/download_data.sh
-./scripts/preprocess_data.sh
-./scripts/split_data.sh
+./scripts/prepare_data.sh
 ./scripts/train_sft.sh
 ./scripts/eval_sft.sh
 ./scripts/train_kto.sh
@@ -146,8 +145,7 @@ tail -f logs/train_sft_*.log
 ### Cách 3: Dùng dispatcher duy nhất
 ```bash
 ./scripts/workflow.sh download-data
-./scripts/workflow.sh preprocess-data
-./scripts/workflow.sh split-data
+./scripts/workflow.sh prepare-data
 ./scripts/workflow.sh train-sft
 ./scripts/workflow.sh eval-sft
 ./scripts/workflow.sh train-kto
@@ -156,14 +154,15 @@ tail -f logs/train_sft_*.log
 
 ### Đánh giá một model bất kỳ
 ```bash
-./scripts/eval_model.sh ./models/sft_checkpoints/final ./results/sft_eval
+./scripts/eval_model.sh ./models/sft_checkpoints/final ./results/sft_eval test_only
+./scripts/eval_model.sh ./models/kto_checkpoints/final ./results/kto_eval kto_test
 ```
 
 ### Chạy trực tiếp Python modules
 ```bash
 python3 -m src.cli.run_sft
 python3 -m src.cli.run_kto
-python3 -m src.cli.run_eval --model-path ./models/kto_checkpoints/final --results-dir ./results/kto_eval
+python3 -m src.cli.run_eval --model-path ./models/kto_checkpoints/final --results-dir ./results/kto_eval --split-name kto_test
 ```
 
 ## Cấu hình
@@ -172,6 +171,9 @@ Các file cấu hình trong thư mục `configs/`:
 - `sft_config.yaml`: Cấu hình SFT training
 - `kto_config.yaml`: Cấu hình KTO training
 - `eval_config.yaml`: Cấu hình evaluation
+
+`system_prompt` được cấu hình trong cả ba file trên tại khóa `prompt.system_prompt`.
+Prompt này được đưa vào format huấn luyện SFT, dữ liệu KTO và inference trước khi gửi câu trả lời sang LLM-as-a-judge.
 
 ## Yêu cầu hệ thống
 

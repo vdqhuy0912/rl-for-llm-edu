@@ -21,23 +21,25 @@ from src.utils.model_utils import ensure_output_dir, load_config, resolve_projec
 
 
 def load_train_and_eval_datasets(config: dict, tokenizer):
+    system_prompt = config.get("prompt", {}).get("system_prompt")
     try:
         train_dataset = load_saved_split_dataset("sft_train")
         train_size = len(train_dataset)
     except Exception:
-        train_dataset = load_hf_datasets(config["data"]["train_datasets"])
+        train_dataset = load_hf_datasets(config["data"]["train_datasets"], split="train")
         train_size = len(train_dataset)
 
     train_dataset = preprocess_sft_data(
         train_dataset,
         tokenizer,
         max_length=config["data"]["max_length"],
+        system_prompt=system_prompt,
     )
 
     try:
         eval_dataset = load_saved_split_dataset("sft_val")
     except Exception:
-        eval_dataset = load_project_dataset(config["data"]["test_dataset"], split="train", prefer_local=True)
+        eval_dataset = load_project_dataset(config["data"]["val_dataset"], split="validation", prefer_local=True)
 
     eval_max_samples = config["data"].get("eval_max_samples")
     if eval_max_samples:
@@ -48,6 +50,7 @@ def load_train_and_eval_datasets(config: dict, tokenizer):
         eval_dataset,
         tokenizer,
         max_length=config["data"]["max_length"],
+        system_prompt=system_prompt,
     )
     return train_dataset, eval_dataset, train_size, eval_size
 

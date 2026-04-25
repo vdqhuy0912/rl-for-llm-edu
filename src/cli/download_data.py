@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download configured datasets into data/raw with local normalization fallback."""
+"""Download configured datasets into data/raw."""
 
 from pathlib import Path
 from shutil import copy2
@@ -7,16 +7,9 @@ from shutil import copy2
 from datasets import load_dataset
 from huggingface_hub import hf_hub_download, list_repo_files
 
-from src.utils.data_utils import save_processed_local_dataset
-
-
 DATASETS = [
-    "vnu-llm2023-ftdata/8k_crawl_web_uet",
-    "vnu-llm2023-ftdata/1700_du_lieu_quy_che_DT",
-    "vnu-llm2023-ftdata/500_tuyen_sinh_chinh_sua",
-    "vnu-llm2023-ftdata/1597_out_hus_qa_final",
-    "vnu-llm2023-ftdata/1k_finetune_and_200_hus",
-    "vnu-llm2023-ftdata/620_sampled_QA_TVTS",
+    "vnu-llm2023-ftdata/qa-daotao-sft",
+    "vnu-llm2023-ftdata/qa-daotao-cho-rl",
 ]
 
 
@@ -54,20 +47,19 @@ def download_datasets(dataset_names, output_root):
 
         try:
             print(f"Loading {ds_name}...")
-            dataset = load_dataset(ds_name, split="train")
+            dataset = load_dataset(ds_name)
             print(f"Saving to {target}...")
             dataset.save_to_disk(str(target))
-            save_processed_local_dataset(ds_name, output_root)
-            print(f"Downloaded {ds_name} ({len(dataset)} samples)\n")
+            if hasattr(dataset, "keys"):
+                split_summary = ", ".join(f"{split}={len(dataset[split])}" for split in dataset.keys())
+            else:
+                split_summary = f"train={len(dataset)}"
+            print(f"Downloaded {ds_name} ({split_summary})\n")
         except Exception as exc:
             print(f"Failed to load {ds_name}: {exc}\n")
             print(f"Falling back to raw file download for {ds_name}...")
             download_raw_dataset_files(ds_name, target / "raw_files")
-            try:
-                save_processed_local_dataset(ds_name, output_root)
-                print(f"Normalized raw files for {ds_name} into local dataset format.\n")
-            except Exception as normalize_exc:
-                print(f"Normalization skipped for {ds_name}: {normalize_exc}\n")
+            print(f"Saved raw split files for {ds_name}. Run prepare-data to materialize/verify local splits.\n")
 
 
 def main():
