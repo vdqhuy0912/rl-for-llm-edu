@@ -1,0 +1,32 @@
+# Core ML libraries
+torch>=2.0.0
+transformers>=4.30.0
+datasets>=2.10.0
+accelerate>=0.20.0
+peft>=0.4.0
+trl>=0.7.0  # For KTO training
+
+# Data processing
+pandas
+numpy
+scikit-learn
+
+# Hugging Face ecosystem
+huggingface_hub
+tokenizers
+
+# Evaluation
+google-generativeai  # For Gemini API
+openai  # Alternative if needed
+
+# Utilities
+tqdm
+wandb  # For logging
+python-dotenv
+pyyaml
+jupyter
+
+# Optional for development
+black
+isort
+flake8

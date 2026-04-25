@@ -1,0 +1,28 @@
+# Evaluation Configuration
+model:
+  path: "./models/kto_checkpoints/final"  # Path to final model
+
+gemini:
+  api_key_env: "GEMINI_API_KEY"
+  model: "gemini-3.1-flash-lite"
+  temperature: 0
+  max_tokens: 1000
+
+evaluation:
+  test_dataset: "vnu-llm2023-ftdata/1k_finetune_and_200_hus"
+  num_samples: 100  # Number of samples to evaluate
+  batch_size: 8
+  max_new_tokens: 512
+  temperature: 0.2
+  do_sample: false
+
+metrics:
+  prompt_file: "./prompt/prompts.py"
+  classifier_placeholders:
+    question: "{QUESTION}"
+    context: "{CONTEXT}"
+  answer_eval_placeholders:
+    question: "{Q}"
+    context: "{C}"
+    answer: "{A_gen}"
+  fallback_for_class_3: "classification_only"

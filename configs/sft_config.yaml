@@ -1,0 +1,55 @@
+# SFT Configuration
+model:
+  name: "Qwen/Qwen3-8B"
+  kto_candidate_name: "Qwen/Qwen3.5-9B"
+  use_fast_tokenizer: true
+
+lora:
+  r: 16
+  lora_alpha: 32
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  lora_dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+qlora:
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_use_double_quant: true
+  bnb_4bit_quant_type: "nf4"
+
+training:
+  output_dir: "./models/sft_checkpoints"
+  num_train_epochs: 3
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16
+  learning_rate: 1.5e-4
+  weight_decay: 0.01
+  warmup_steps: 100
+  logging_steps: 10
+  save_steps: 250
+  eval_steps: 250
+  save_total_limit: 3
+  fp16: true
+  dataloader_num_workers: 4
+  gradient_checkpointing: true
+  optim: "paged_adamw_8bit"
+  lr_scheduler_type: "cosine"
+  report_to: "none"
+  remove_unused_columns: false
+  evaluation_strategy: "steps"
+  save_strategy: "steps"
+  load_best_model_at_end: false
+
+data:
+  train_datasets:
+    - "vnu-llm2023-ftdata/8k_crawl_web_uet"
+    - "vnu-llm2023-ftdata/1700_du_lieu_quy_che_DT"
+    - "vnu-llm2023-ftdata/500_tuyen_sinh_chinh_sua"
+    - "vnu-llm2023-ftdata/1597_out_hus_qa_final"
+  test_dataset: "vnu-llm2023-ftdata/1k_finetune_and_200_hus"
+  auxiliary_split_dataset: "vnu-llm2023-ftdata/620_sampled_QA_TVTS"
+  max_length: 1536
+  preprocessing_num_workers: 4
+  eval_max_samples: 256
