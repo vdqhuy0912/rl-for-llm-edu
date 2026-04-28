@@ -122,6 +122,24 @@ tmux new -s rl-train
 ./scripts/workflow.sh eval-kto
 ```
 
+### Xếp job vào tmux và tự đợi GPU rảnh
+```bash
+./scripts/tmux_wait_gpu.sh rl-sft ./scripts/workflow.sh train-sft
+./scripts/tmux_wait_gpu.sh rl-kto ./scripts/workflow.sh train-kto
+```
+
+Có thể chỉnh ngưỡng trước khi chạy:
+```bash
+GPU_MAX_MEMORY_MB=500 GPU_MAX_UTILIZATION=5 GPU_WAIT_INTERVAL_SEC=30 \
+./scripts/tmux_wait_gpu.sh rl-sft ./scripts/workflow.sh train-sft
+```
+
+Behavior:
+- Script tạo tmux session detached.
+- Mỗi `GPU_WAIT_INTERVAL_SEC` giây, script kiểm tra `nvidia-smi`.
+- GPU đầu tiên có `memory.used <= GPU_MAX_MEMORY_MB` và `utilization.gpu <= GPU_MAX_UTILIZATION` sẽ được chọn.
+- Command được chạy với `CUDA_VISIBLE_DEVICES=<gpu_index>` trong session đó.
+
 Các lệnh tmux cơ bản:
 ```bash
 # tách khỏi session (detach): nhấn Ctrl+b rồi nhấn d
