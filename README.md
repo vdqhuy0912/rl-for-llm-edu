@@ -82,6 +82,12 @@ conda activate rl-llm-edu
 pip install -r requirements.txt
 ```
 
+Nếu dùng QLoRA 4-bit hoặc optimizer `paged_adamw_8bit`, cần có `bitsandbytes>=0.46.1`.
+Nếu môi trường hiện tại đã tạo sẵn từ trước, chạy thêm:
+```bash
+pip install -U "bitsandbytes>=0.46.1"
+```
+
 ### 3. Thiết lập API keys
 ```bash
 echo 'GEMINI_API_KEY=your_gemini_api_key_here' > .env
@@ -185,6 +191,7 @@ Prompt này được đưa vào format huấn luyện SFT, dữ liệu KTO và i
 ## Lưu ý
 
 - Python logic hiện nằm trong `src/cli/`; thư mục `scripts/` chỉ còn shell automation.
+- `load_in_4bit: true` hoặc `optim: paged_adamw_8bit` đều cần `bitsandbytes>=0.46.1`.
 - Training logs được lưu trong `logs/`.
 - Checkpoints trung gian được lưu theo `save_steps` của Hugging Face/TRL trong `models/sft_checkpoints/` và `models/kto_checkpoints/`.
 - Final models được lưu ở:

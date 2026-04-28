@@ -17,7 +17,13 @@ from src.utils.data_utils import (
     load_saved_split_dataset,
     preprocess_sft_data,
 )
-from src.utils.model_utils import ensure_output_dir, load_config, resolve_project_path, setup_logging
+from src.utils.model_utils import (
+    ensure_bitsandbytes_available,
+    ensure_output_dir,
+    load_config,
+    resolve_project_path,
+    setup_logging,
+)
 
 
 def load_train_and_eval_datasets(config: dict, tokenizer):
@@ -62,6 +68,12 @@ def main():
     logger.info("Starting SFT training")
     model_name = config["model"]["name"]
     logger.info("Loading model: %s", model_name)
+
+    optim_name = str(config["training"].get("optim", "")).lower()
+    if config["qlora"]["load_in_4bit"]:
+        ensure_bitsandbytes_available("QLoRA 4-bit loading")
+    if "8bit" in optim_name:
+        ensure_bitsandbytes_available(f"Optimizer `{config['training']['optim']}`")
 
     if config["qlora"]["load_in_4bit"]:
         from transformers import BitsAndBytesConfig

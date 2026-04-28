@@ -5,6 +5,7 @@ datasets>=2.10.0
 accelerate>=0.20.0
 peft>=0.4.0
 trl>=0.7.0  # For KTO training
+bitsandbytes>=0.46.1
 
 # Data processing
 pandas

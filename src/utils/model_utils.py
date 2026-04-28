@@ -1,6 +1,8 @@
 import logging
+import re
 from pathlib import Path
 from typing import Any
+from importlib import metadata
 
 import yaml
 
@@ -58,6 +60,30 @@ def ensure_output_dir(path_like: str | Path) -> Path:
     path = resolve_project_path(path_like)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def ensure_bitsandbytes_available(reason: str, minimum_version: str = "0.46.1") -> None:
+    """Raise a clear error when bitsandbytes is required but unavailable."""
+    try:
+        installed_version = metadata.version("bitsandbytes")
+    except metadata.PackageNotFoundError as exc:
+        raise RuntimeError(
+            f"{reason} requires bitsandbytes>={minimum_version}. "
+            "Install it with `pip install -U bitsandbytes>=0.46.1` "
+            "or disable 4-bit / 8-bit bitsandbytes features in the training config."
+        ) from exc
+
+    def normalize(version: str) -> tuple[int, ...]:
+        matches = re.findall(r"\d+", version)
+        return tuple(int(part) for part in matches[:3])
+
+    if normalize(installed_version) < normalize(minimum_version):
+        raise RuntimeError(
+            f"{reason} requires bitsandbytes>={minimum_version}, "
+            f"but found {installed_version}. "
+            "Upgrade with `pip install -U bitsandbytes>=0.46.1` "
+            "or disable 4-bit / 8-bit bitsandbytes features in the training config."
+        )
 
 
 def save_checkpoint(model, tokenizer, output_dir: str | Path, step: int):

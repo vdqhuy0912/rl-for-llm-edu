@@ -7,7 +7,13 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import KTOConfig, KTOTrainer
 
 from src.utils.data_utils import load_project_dataset, load_saved_split_dataset, prepare_kto_data
-from src.utils.model_utils import ensure_output_dir, load_config, resolve_project_path, setup_logging
+from src.utils.model_utils import (
+    ensure_bitsandbytes_available,
+    ensure_output_dir,
+    load_config,
+    resolve_project_path,
+    setup_logging,
+)
 
 
 def load_train_and_eval_datasets(config: dict, tokenizer):
@@ -40,6 +46,10 @@ def main():
     logger.info("Starting KTO training")
     base_model_path = config["model"]["base_model_path"]
     logger.info("Loading model from: %s", base_model_path)
+
+    optim_name = str(config["training"].get("optim", "")).lower()
+    if "8bit" in optim_name:
+        ensure_bitsandbytes_available(f"Optimizer `{config['training']['optim']}`")
 
     try:
         model = AutoPeftModelForCausalLM.from_pretrained(
