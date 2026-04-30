@@ -20,6 +20,7 @@ from src.utils.data_utils import (
 from src.utils.model_utils import (
     ensure_bitsandbytes_available,
     ensure_output_dir,
+    instantiate_config_class,
     load_config,
     resolve_project_path,
     setup_logging,
@@ -119,7 +120,14 @@ def main():
     training_config = dict(config["training"])
     training_config["output_dir"] = str(ensure_output_dir(training_config["output_dir"]))
     training_config.setdefault("disable_tqdm", False)
-    training_args = TrainingArguments(**training_config)
+    training_args = instantiate_config_class(
+        TrainingArguments,
+        training_config,
+        aliases={
+            "evaluation_strategy": "eval_strategy",
+            "eval_strategy": "evaluation_strategy",
+        },
+    )
 
     trainer = Trainer(
         model=model,

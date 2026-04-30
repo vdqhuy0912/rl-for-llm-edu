@@ -1,5 +1,6 @@
 import logging
 import re
+import inspect
 from pathlib import Path
 from typing import Any
 from importlib import metadata
@@ -84,6 +85,25 @@ def ensure_bitsandbytes_available(reason: str, minimum_version: str = "0.46.1") 
             "Upgrade with `pip install -U bitsandbytes>=0.46.1` "
             "or disable 4-bit / 8-bit bitsandbytes features in the training config."
         )
+
+
+def instantiate_config_class(config_class, config: dict[str, Any], aliases: dict[str, str] | None = None):
+    """Instantiate a config/dataclass while tolerating renamed keyword arguments across library versions."""
+    aliases = aliases or {}
+    signature = inspect.signature(config_class.__init__)
+    parameters = signature.parameters
+
+    normalized_config = dict(config)
+    for source_key, target_key in aliases.items():
+        if source_key in normalized_config and target_key not in normalized_config and target_key in parameters:
+            normalized_config[target_key] = normalized_config[source_key]
+
+    accepted_kwargs = {
+        key: value
+        for key, value in normalized_config.items()
+        if key in parameters
+    }
+    return config_class(**accepted_kwargs)
 
 
 def save_checkpoint(model, tokenizer, output_dir: str | Path, step: int):

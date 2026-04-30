@@ -10,6 +10,7 @@ from src.utils.data_utils import load_project_dataset, load_saved_split_dataset,
 from src.utils.model_utils import (
     ensure_bitsandbytes_available,
     ensure_output_dir,
+    instantiate_config_class,
     load_config,
     resolve_project_path,
     setup_logging,
@@ -80,34 +81,20 @@ def main():
     kto_training["output_dir"] = str(ensure_output_dir(kto_training["output_dir"]))
     kto_training.setdefault("disable_tqdm", False)
 
-    kto_config = KTOConfig(
-        output_dir=kto_training["output_dir"],
-        num_train_epochs=kto_training["num_train_epochs"],
-        per_device_train_batch_size=kto_training["per_device_train_batch_size"],
-        per_device_eval_batch_size=kto_training["per_device_eval_batch_size"],
-        gradient_accumulation_steps=kto_training["gradient_accumulation_steps"],
-        learning_rate=kto_training["learning_rate"],
-        weight_decay=kto_training["weight_decay"],
-        warmup_steps=kto_training["warmup_steps"],
-        logging_steps=kto_training["logging_steps"],
-        save_steps=kto_training["save_steps"],
-        eval_steps=kto_training["eval_steps"],
-        save_total_limit=kto_training["save_total_limit"],
-        fp16=kto_training["fp16"],
-        gradient_checkpointing=kto_training["gradient_checkpointing"],
-        optim=kto_training["optim"],
-        lr_scheduler_type=kto_training["lr_scheduler_type"],
-        report_to=kto_training["report_to"],
-        remove_unused_columns=kto_training["remove_unused_columns"],
-        evaluation_strategy=kto_training["evaluation_strategy"],
-        save_strategy=kto_training["save_strategy"],
-        load_best_model_at_end=kto_training["load_best_model_at_end"],
-        disable_tqdm=kto_training["disable_tqdm"],
-        beta=config["kto"]["beta"],
-        desirable_weight=config["kto"]["desirable_weight"],
-        undesirable_weight=config["kto"]["undesirable_weight"],
-        max_length=config["kto"]["max_length"],
-        truncation_mode=config["kto"]["truncation_mode"],
+    kto_config = instantiate_config_class(
+        KTOConfig,
+        {
+            **kto_training,
+            "beta": config["kto"]["beta"],
+            "desirable_weight": config["kto"]["desirable_weight"],
+            "undesirable_weight": config["kto"]["undesirable_weight"],
+            "max_length": config["kto"]["max_length"],
+            "truncation_mode": config["kto"]["truncation_mode"],
+        },
+        aliases={
+            "evaluation_strategy": "eval_strategy",
+            "eval_strategy": "evaluation_strategy",
+        },
     )
 
     trainer = KTOTrainer(
