@@ -17,7 +17,7 @@ huggingface_hub
 tokenizers
 
 # Evaluation
-google-generativeai  # For Gemini API
+google-genai  # For Gemini API
 openai  # Alternative if needed
 
 # Utilities

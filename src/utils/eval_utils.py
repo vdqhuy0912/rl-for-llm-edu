@@ -1,14 +1,14 @@
 """Shared helpers for model inference and Gemini judging."""
 
+import copy
 import json
 import os
 import re
 from pathlib import Path
 
-import google.generativeai as genai
 import pandas as pd
+import torch
 from tqdm import tqdm
-from transformers import pipeline
 
 from src.utils.data_utils import build_instruction_prompt, normalize_qa_example
 from src.utils.model_utils import ensure_output_dir, resolve_project_path
@@ -21,8 +21,15 @@ CLASS3_MARKER = 'PROMPT_QA_CLASS3 = """'
 
 
 def setup_gemini(api_key: str, model_name: str):
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel(model_name)
+    try:
+        from google import genai
+    except ImportError as exc:
+        raise RuntimeError(
+            "Gemini judging now requires the `google-genai` package. "
+            "Install it with `pip install google-genai` or update the project environment."
+        ) from exc
+
+    return genai.Client(api_key=api_key), model_name
 
 
 def load_judge_prompts(prompt_file: str) -> dict:
@@ -63,9 +70,10 @@ def render_answer_prompt(template: str, question: str, context: str, answer: str
 
 
 def classify_question_context(gemini_model, prompts: dict, question: str, context: str) -> dict:
+    client, model_name = gemini_model
     prompt = render_classifier_prompt(prompts["classifier"], question, context)
-    response = gemini_model.generate_content(prompt)
-    text = response.text.strip()
+    response = client.models.generate_content(model=model_name, contents=prompt)
+    text = (response.text or "").strip()
 
     try:
         return json.loads(text)
@@ -78,49 +86,89 @@ def classify_question_context(gemini_model, prompts: dict, question: str, contex
 
 def generate_responses(model, tokenizer, dataset, config):
     system_prompt = config.get("prompt", {}).get("system_prompt")
-    generator = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=config["evaluation"]["max_new_tokens"],
-        temperature=config["evaluation"]["temperature"],
-        do_sample=config["evaluation"]["do_sample"],
-        pad_token_id=tokenizer.eos_token_id,
-    )
-
     responses = []
     num_samples = min(config["evaluation"]["num_samples"], len(dataset))
+    batch_size = max(1, int(config["evaluation"].get("batch_size", 1)))
+    model.eval()
 
-    for index in tqdm(range(num_samples), desc="Generating responses"):
-        example = normalize_qa_example(dataset[index])
-        prompt = build_instruction_prompt(
-            example["question"],
-            example["context"],
-            system_prompt=system_prompt,
-        )
+    generation_config = copy.deepcopy(model.generation_config)
+    generation_config.max_length = None
+    generation_config.max_new_tokens = config["evaluation"]["max_new_tokens"]
+    generation_config.do_sample = config["evaluation"]["do_sample"]
+    generation_config.pad_token_id = tokenizer.eos_token_id
+    if generation_config.do_sample:
+        generation_config.temperature = config["evaluation"]["temperature"]
+    else:
+        generation_config.temperature = None
+        generation_config.top_p = None
+        generation_config.top_k = None
 
-        try:
-            generated = generator(prompt)[0]["generated_text"]
-            response = generated[len(prompt):].strip()
-        except Exception as exc:
-            response = f"Error generating response: {exc}"
+    model_device = next(model.parameters()).device
 
-        responses.append(
-            {
-                "question": example["question"],
-                "context": example["context"],
-                "reference_answer": example["answer"],
-                "generated_answer": response,
-                "insufficient_context": example["insufficient_context"],
-                "multi_intent": example["multi_intent"],
-            }
-        )
+    with torch.no_grad():
+        for start in tqdm(range(0, num_samples, batch_size), desc="Generating responses"):
+            batch_examples = []
+            batch_prompts = []
+
+            for index in range(start, min(start + batch_size, num_samples)):
+                example = normalize_qa_example(dataset[index])
+                batch_examples.append(example)
+                batch_prompts.append(
+                    build_instruction_prompt(
+                        example["question"],
+                        example["context"],
+                        system_prompt=system_prompt,
+                    )
+                )
+
+            inputs = tokenizer(
+                batch_prompts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+            )
+            inputs = {key: value.to(model_device) for key, value in inputs.items()}
+
+            try:
+                output_ids = model.generate(
+                    **inputs,
+                    generation_config=generation_config,
+                )
+                input_lengths = inputs["attention_mask"].sum(dim=1).tolist()
+
+                for example, generated_ids, input_length in zip(batch_examples, output_ids, input_lengths):
+                    generated_tokens = generated_ids[int(input_length):]
+                    response = tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+                    responses.append(
+                        {
+                            "question": example["question"],
+                            "context": example["context"],
+                            "reference_answer": example["answer"],
+                            "generated_answer": response,
+                            "insufficient_context": example["insufficient_context"],
+                            "multi_intent": example["multi_intent"],
+                        }
+                    )
+            except Exception as exc:
+                error_message = f"Error generating response: {exc}"
+                for example in batch_examples:
+                    responses.append(
+                        {
+                            "question": example["question"],
+                            "context": example["context"],
+                            "reference_answer": example["answer"],
+                            "generated_answer": error_message,
+                            "insufficient_context": example["insufficient_context"],
+                            "multi_intent": example["multi_intent"],
+                        }
+                    )
 
     return responses
 
 
 def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config):
     evaluations = []
+    client, model_name = gemini_model
 
     for item in tqdm(responses, desc="Evaluating with Gemini"):
         classification = classify_question_context(
@@ -142,7 +190,7 @@ def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config):
                 item["context"],
                 item["generated_answer"],
             )
-            evaluation_text = gemini_model.generate_content(prompt).text
+            evaluation_text = client.models.generate_content(model=model_name, contents=prompt).text or ""
         elif class_label == "CLASS_2":
             evaluation_mode = "PROMPT_QA_CLASS2"
             prompt = render_answer_prompt(
@@ -151,7 +199,7 @@ def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config):
                 item["context"],
                 item["generated_answer"],
             )
-            evaluation_text = gemini_model.generate_content(prompt).text
+            evaluation_text = client.models.generate_content(model=model_name, contents=prompt).text or ""
         elif class_label == "CLASS_3":
             evaluation_mode = "PROMPT_QA_CLASS3"
             prompt = render_answer_prompt(
@@ -160,7 +208,7 @@ def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config):
                 item["context"],
                 item["generated_answer"],
             )
-            evaluation_text = gemini_model.generate_content(prompt).text
+            evaluation_text = client.models.generate_content(model=model_name, contents=prompt).text or ""
         else:
             evaluation_mode = config["metrics"]["fallback_for_class_3"]
 

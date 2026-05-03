@@ -67,8 +67,8 @@ tuning:
   mode: "qlora"
 
 lora:
-  r: 64
-  lora_alpha: 128
+  r: 32
+  lora_alpha: 64
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
   lora_dropout: 0.1
   bias: "none"
@@ -93,7 +93,7 @@ data:
   val_dataset: "vnu-llm2023-ftdata/qa-daotao-cho-rl"
   test_dataset: "vnu-llm2023-ftdata/qa-daotao-sft"
   preprocessing_num_workers: 4
-  eval_max_samples: 256
+  # eval_max_samples: 256
   conversion:
     design: "gold_answer_vs_synthetic_negative"
     positive_source: "answer"

@@ -2,12 +2,26 @@
 """Generate model responses only, without Gemini judging."""
 
 import argparse
+import os
 
+import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.utils.data_utils import load_project_dataset, load_saved_split_dataset
 from src.utils.eval_utils import generate_responses, save_records
 from src.utils.model_utils import load_config, setup_logging
+
+
+def summarize_model_device_map(model) -> str:
+    hf_device_map = getattr(model, "hf_device_map", None)
+    if hf_device_map:
+        unique_targets = sorted({str(target) for target in hf_device_map.values()})
+        return ", ".join(unique_targets)
+
+    try:
+        return str(next(model.parameters()).device)
+    except StopIteration:
+        return "unknown"
 
 
 def parse_args():
@@ -33,6 +47,13 @@ def main():
     model_path = args.model_path or config["model"]["path"]
     logger.info("Starting inference")
     logger.info("Loading model from: %s", model_path)
+    logger.info(
+        "CUDA status: is_available=%s device_count=%s visible_devices=%s torch_cuda_version=%s",
+        torch.cuda.is_available(),
+        torch.cuda.device_count(),
+        os.environ.get("CUDA_VISIBLE_DEVICES", "all"),
+        torch.version.cuda,
+    )
 
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
@@ -41,6 +62,9 @@ def main():
         trust_remote_code=True,
     )
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    logger.info("Model device placement: %s", summarize_model_device_map(model))
 
     split_name = args.split_name or config["evaluation"].get("split_name", "test_only")
     try:

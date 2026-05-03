@@ -44,7 +44,7 @@ evaluation:
   test_dataset: "vnu-llm2023-ftdata/qa-daotao-sft"
   source_split: "test"
   split_name: "test_only"
-  num_samples: 100  # Number of samples to evaluate
+  num_samples: 2000  # Number of samples to evaluate
   batch_size: 8
   max_new_tokens: 512
   temperature: 0

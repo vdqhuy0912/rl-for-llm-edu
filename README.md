@@ -298,7 +298,7 @@ CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m src.cli.run_infer \
   --max-new-tokens 32
 ```
 
-Gemini judge hiện dùng model `gemini-3.1-flash-lite-preview` trong `configs/eval_config.yaml`.
+Gemini judge hiện dùng model `gemini-3.1-flash-lite-preview` trong `configs/eval_config.yaml` qua SDK `google-genai`.
 
 ## Yêu cầu hệ thống
 
@@ -319,6 +319,11 @@ Gemini judge hiện dùng model `gemini-3.1-flash-lite-preview` trong `configs/e
   - `models/sft_checkpoints/final`
   - `models/kto_checkpoints/final`
 - Inference và judging mặc định được lưu trong `results/`, hoặc thư mục bạn truyền vào `workflow.sh infer-model` và `workflow.sh judge-file`.
+- Nếu dùng `eval-sft`, `eval-kto` hoặc `eval-all`, output được tách thành:
+  - `<results_dir>/inference/generated_responses.json`
+  - `<results_dir>/inference/generated_responses.csv`
+  - `<results_dir>/judge/evaluation_results.json`
+  - `<results_dir>/judge/evaluation_results.csv`
 - Nếu `./scripts/eval_*.sh` được dùng, script sẽ tự load `.env`.
 
 ## Kết quả

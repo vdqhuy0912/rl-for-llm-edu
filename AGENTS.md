@@ -72,6 +72,7 @@ Quy ước sử dụng:
   - `src.cli.run_infer`: chỉ generate response
   - `src.cli.run_judge`: chỉ chấm bằng Gemini
 - Helper dùng chung nằm ở `src/utils/eval_utils.py`
+- Inference dùng `model.generate()` trực tiếp, không dùng `transformers.pipeline`
 - `scripts/workflow.sh` hỗ trợ:
   - `infer-model`
   - `judge-file`
@@ -81,6 +82,7 @@ Quy ước sử dụng:
 
 ### 7. Gemini judge
 - Gemini model hiện dùng: `gemini-3.1-flash-lite-preview`
+- SDK hiện dùng: `google-genai`
 - Prompt judge đọc từ `prompt/prompts.py`
 - Quy trình judge:
   - classify `(question, context)` thành `CLASS_1`, `CLASS_2`, `CLASS_3`
