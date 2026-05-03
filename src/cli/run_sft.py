@@ -62,6 +62,22 @@ def load_train_and_eval_datasets(config: dict, tokenizer):
     return train_dataset, eval_dataset, train_size, eval_size
 
 
+def build_quantization_config(config: dict):
+    qlora_config = config.get("qlora", {})
+    if not qlora_config.get("load_in_4bit", False):
+        return None
+
+    ensure_bitsandbytes_available("QLoRA 4-bit loading")
+    from transformers import BitsAndBytesConfig
+
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=getattr(torch, qlora_config.get("bnb_4bit_compute_dtype", "bfloat16")),
+        bnb_4bit_use_double_quant=qlora_config.get("bnb_4bit_use_double_quant", True),
+        bnb_4bit_quant_type=qlora_config.get("bnb_4bit_quant_type", "nf4"),
+    )
+
+
 def main():
     config = load_config("configs/sft_config.yaml")
     logger = setup_logging(logger_name="train.sft")
@@ -71,28 +87,21 @@ def main():
     logger.info("Loading model: %s", model_name)
 
     optim_name = str(config["training"].get("optim", "")).lower()
-    if config["qlora"]["load_in_4bit"]:
-        ensure_bitsandbytes_available("QLoRA 4-bit loading")
     if "8bit" in optim_name:
         ensure_bitsandbytes_available(f"Optimizer `{config['training']['optim']}`")
 
-    if config["qlora"]["load_in_4bit"]:
-        from transformers import BitsAndBytesConfig
-
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=config["qlora"]["load_in_4bit"],
-            bnb_4bit_compute_dtype=getattr(torch, config["qlora"]["bnb_4bit_compute_dtype"]),
-            bnb_4bit_use_double_quant=config["qlora"]["bnb_4bit_use_double_quant"],
-            bnb_4bit_quant_type=config["qlora"]["bnb_4bit_quant_type"],
-        )
+    quantization_config = build_quantization_config(config)
+    if quantization_config is not None:
+        logger.info("SFT tuning mode: QLoRA 4-bit")
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            quantization_config=bnb_config,
+            quantization_config=quantization_config,
             device_map="auto",
             trust_remote_code=True,
         )
         model = prepare_model_for_kbit_training(model)
     else:
+        logger.info("SFT tuning mode: LoRA")
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.float16,

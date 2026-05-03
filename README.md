@@ -178,15 +178,17 @@ tail -f logs/train_sft_*.log
 
 ### Đánh giá một model bất kỳ
 ```bash
-./scripts/eval_model.sh ./models/sft_checkpoints/final ./results/sft_eval test_only
-./scripts/eval_model.sh ./models/kto_checkpoints/final ./results/kto_eval kto_test
+./scripts/workflow.sh infer-model ./models/sft_checkpoints/final ./results/sft_infer test_only
+./scripts/workflow.sh judge-file ./results/sft_infer/generated_responses.json ./results/sft_judge
+
 ```
 
 ### Chạy trực tiếp Python modules
 ```bash
 python3 -m src.cli.run_sft
 python3 -m src.cli.run_kto
-python3 -m src.cli.run_eval --model-path ./models/kto_checkpoints/final --results-dir ./results/kto_eval --split-name kto_test
+python3 -m src.cli.run_infer --model-path ./models/kto_checkpoints/final --results-dir ./results/kto_infer --split-name kto_test
+python3 -m src.cli.run_judge --input-path ./results/kto_infer/generated_responses.json --results-dir ./results/kto_judge
 ```
 
 ## Cấu hình
@@ -199,6 +201,105 @@ Các file cấu hình trong thư mục `configs/`:
 `system_prompt` được cấu hình trong cả ba file trên tại khóa `prompt.system_prompt`.
 Prompt này được đưa vào format huấn luyện SFT, dữ liệu KTO và inference trước khi gửi câu trả lời sang LLM-as-a-judge.
 
+### LoRA / QLoRA cho SFT
+
+SFT luôn train bằng LoRA adapter. Chế độ LoRA hay QLoRA được chọn bằng `configs/sft_config.yaml`:
+
+```yaml
+qlora:
+  load_in_4bit: false  # LoRA thường
+```
+
+Đổi sang QLoRA 4-bit:
+
+```yaml
+qlora:
+  load_in_4bit: true
+```
+
+LoRA SFT hiện dùng:
+
+```yaml
+lora:
+  r: 64
+  lora_alpha: 128
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  lora_dropout: 0.1
+  bias: "none"
+  task_type: "CAUSAL_LM"
+```
+
+Khi `load_in_4bit: true`, code load model bằng `BitsAndBytesConfig` và gọi `prepare_model_for_kbit_training()` trước khi gắn LoRA adapter.
+
+### LoRA / QLoRA cho KTO
+
+KTO hỗ trợ ba chế độ trong `configs/kto_config.yaml`:
+
+```yaml
+tuning:
+  mode: "qlora"  # options: "qlora", "lora", "none"
+```
+
+- `qlora`: load base/SFT model 4-bit và train LoRA adapter. Đây là mặc định khuyến nghị cho Qwen 8B.
+- `lora`: load model ở fp16 và train LoRA adapter.
+- `none`: full fine-tune, thường không phù hợp với GPU 48GB vì KTO cần reference policy.
+
+LoRA KTO đã được đồng bộ với SFT:
+
+```yaml
+lora:
+  r: 64
+  lora_alpha: 128
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  lora_dropout: 0.1
+  bias: "none"
+  task_type: "CAUSAL_LM"
+```
+
+Lưu ý KTO của TRL yêu cầu actual batch size > 1, nên `per_device_train_batch_size` và `per_device_eval_batch_size` mặc định là `2`.
+
+Chạy KTO mặc định bằng QLoRA:
+
+```bash
+./scripts/train_kto.sh
+```
+
+Ép chạy LoRA fp16:
+
+```bash
+./scripts/train_kto.sh --tuning-mode lora
+```
+
+Smoke test KTO bằng base model:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m src.cli.run_kto \
+  --model-path Qwen/Qwen3-8B \
+  --output-dir models/kto_qlora_smoke_test \
+  --max-steps 1 \
+  --num-train-samples 2 \
+  --num-eval-samples 2 \
+  --max-length 128 \
+  --per-device-train-batch-size 2 \
+  --per-device-eval-batch-size 2 \
+  --tuning-mode qlora
+```
+
+### Smoke test evaluation
+
+`run_infer.py` hỗ trợ giới hạn số mẫu và số token sinh để test nhanh:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m src.cli.run_infer \
+  --model-path Qwen/Qwen3-8B \
+  --results-dir results/infer_smoke_test \
+  --split-name test_only \
+  --num-samples 1 \
+  --max-new-tokens 32
+```
+
+Gemini judge hiện dùng model `gemini-3.1-flash-lite-preview` trong `configs/eval_config.yaml`.
+
 ## Yêu cầu hệ thống
 
 - Python 3.10+
@@ -210,12 +311,14 @@ Prompt này được đưa vào format huấn luyện SFT, dữ liệu KTO và i
 
 - Python logic hiện nằm trong `src/cli/`; thư mục `scripts/` chỉ còn shell automation.
 - `load_in_4bit: true` hoặc `optim: paged_adamw_8bit` đều cần `bitsandbytes>=0.46.1`.
+- SFT chọn LoRA/QLoRA bằng `configs/sft_config.yaml -> qlora.load_in_4bit`.
+- KTO chọn QLoRA/LoRA bằng `configs/kto_config.yaml -> tuning.mode`.
 - Training logs được lưu trong `logs/`.
 - Checkpoints trung gian được lưu theo `save_steps` của Hugging Face/TRL trong `models/sft_checkpoints/` và `models/kto_checkpoints/`.
 - Final models được lưu ở:
   - `models/sft_checkpoints/final`
   - `models/kto_checkpoints/final`
-- Evaluation results mặc định được lưu trong `results/`, hoặc thư mục bạn truyền vào `eval_model.sh`.
+- Inference và judging mặc định được lưu trong `results/`, hoặc thư mục bạn truyền vào `workflow.sh infer-model` và `workflow.sh judge-file`.
 - Nếu `./scripts/eval_*.sh` được dùng, script sẽ tự load `.env`.
 
 ## Kết quả
@@ -223,6 +326,8 @@ Prompt này được đưa vào format huấn luyện SFT, dữ liệu KTO và i
 Kết quả evaluation sẽ được lưu trong thư mục `results/`:
 - `evaluation_results.json`: Chi tiết đánh giá
 - `evaluation_results.csv`: Bảng tổng hợp
+- `generated_responses.json`: Output inference trước khi judge
+- `generated_responses.csv`: Bảng inference trước khi judge
 
 ## License
 

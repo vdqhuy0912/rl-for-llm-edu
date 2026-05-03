@@ -1,7 +1,5 @@
-#!/usr/bin/env python3
-"""Evaluate a trained model using Gemini with the project judge prompts."""
+"""Shared helpers for model inference and Gemini judging."""
 
-import argparse
 import json
 import os
 import re
@@ -10,15 +8,10 @@ from pathlib import Path
 import google.generativeai as genai
 import pandas as pd
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from transformers import pipeline
 
-from src.utils.data_utils import (
-    build_instruction_prompt,
-    load_project_dataset,
-    load_saved_split_dataset,
-    normalize_qa_example,
-)
-from src.utils.model_utils import ensure_output_dir, load_config, resolve_project_path, setup_logging
+from src.utils.data_utils import build_instruction_prompt, normalize_qa_example
+from src.utils.model_utils import ensure_output_dir, resolve_project_path
 
 
 CLASSIFIER_MARKER = 'PROMPT_QA_CLASSIFIER = """'
@@ -184,68 +177,29 @@ def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config):
     return evaluations
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-path", help="Override model path from config.")
-    parser.add_argument("--results-dir", help="Directory to write evaluation outputs.")
-    parser.add_argument("--split-name", help="Saved split name to use for generation/evaluation.")
-    parser.add_argument("--num-samples", type=int, help="Override number of samples to generate/evaluate.")
-    return parser.parse_args()
-
-
-def main():
-    args = parse_args()
-    config = load_config("configs/eval_config.yaml")
-    if args.num_samples is not None:
-        config["evaluation"]["num_samples"] = args.num_samples
-    logger = setup_logging(logger_name="eval.gemini")
-
-    logger.info("Starting evaluation")
-    model_path = args.model_path or config["model"]["path"]
-    logger.info("Loading model from: %s", model_path)
-
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        torch_dtype="auto",
-        device_map="auto",
-        trust_remote_code=True,
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-
-    split_name = args.split_name or config["evaluation"].get("split_name", "test_only")
-    try:
-        test_dataset = load_saved_split_dataset(split_name)
-        logger.info("Loaded deterministic split %s with %s samples", split_name, len(test_dataset))
-    except Exception:
-        test_dataset = load_project_dataset(
-            config["evaluation"]["test_dataset"],
-            split=config["evaluation"].get("source_split", "test"),
-            prefer_local=True,
-        )
-        logger.info("Loaded test dataset with %s samples", len(test_dataset))
-
-    responses = generate_responses(model, tokenizer, test_dataset, config)
-
+def load_gemini_model_from_config(config: dict):
     api_key = os.getenv(config["gemini"]["api_key_env"])
     if not api_key:
         raise ValueError(f"Environment variable {config['gemini']['api_key_env']} not set")
+    return setup_gemini(api_key, config["gemini"]["model"])
 
-    gemini_model = setup_gemini(api_key, config["gemini"]["model"])
-    prompt_bundle = load_judge_prompts(config["metrics"]["prompt_file"])
-    evaluations = evaluate_with_gemini(gemini_model, responses, prompt_bundle, config)
 
-    results_dir = ensure_output_dir(args.results_dir or "./results")
-    json_path = results_dir / "evaluation_results.json"
-    csv_path = results_dir / "evaluation_results.csv"
+def save_records(records: list[dict], output_dir: str | Path, stem: str) -> tuple[Path, Path]:
+    output_dir = ensure_output_dir(output_dir)
+    json_path = output_dir / f"{stem}.json"
+    csv_path = output_dir / f"{stem}.csv"
 
     with json_path.open("w", encoding="utf-8") as file:
-        json.dump(evaluations, file, ensure_ascii=False, indent=2)
+        json.dump(records, file, ensure_ascii=False, indent=2)
 
-    pd.DataFrame(evaluations).to_csv(csv_path, index=False, encoding="utf-8")
-    logger.info("Evaluation completed. Results saved to %s", json_path)
-    print(f"Evaluated {len(evaluations)} samples")
-    print(f"Results saved to: {json_path}")
+    pd.DataFrame(records).to_csv(csv_path, index=False, encoding="utf-8")
+    return json_path, csv_path
 
 
-if __name__ == "__main__":
-    main()
+def load_records(input_path: str | Path) -> list[dict]:
+    input_path = resolve_project_path(input_path)
+    if input_path.suffix.lower() == ".json":
+        return json.loads(input_path.read_text(encoding="utf-8"))
+    if input_path.suffix.lower() == ".csv":
+        return pd.read_csv(input_path).to_dict(orient="records")
+    raise ValueError(f"Unsupported input file format: {input_path}")

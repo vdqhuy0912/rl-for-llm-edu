@@ -11,7 +11,8 @@ Usage:
   scripts/workflow.sh train-sft
   scripts/workflow.sh train-kto
   scripts/workflow.sh tmux-wait-gpu <session_name> <command> [args...]
-  scripts/workflow.sh eval-model <model_path> [results_dir] [split_name] [num_samples]
+  scripts/workflow.sh infer-model <model_path> [results_dir] [split_name] [num_samples]
+  scripts/workflow.sh judge-file <input_path> [results_dir]
   scripts/workflow.sh eval-sft
   scripts/workflow.sh eval-kto
   scripts/workflow.sh eval-all
@@ -82,7 +83,36 @@ run_tmux_wait_gpu() {
   echo "Thresholds: GPU_MAX_MEMORY_MB=${max_memory_mb}, GPU_MAX_UTILIZATION=${max_utilization}, GPU_WAIT_INTERVAL_SEC=${interval_sec}"
 }
 
-run_eval_model() {
+run_infer_model() {
+  if [[ $# -lt 1 || $# -gt 4 ]]; then
+    usage
+    exit 1
+  fi
+
+  local model_path="$1"
+  local results_dir="${2:-${REPO_ROOT}/results/$(basename "${model_path}")_infer}"
+  local split_name="${3:-test_only}"
+  local num_samples="${4:-}"
+  if [[ -n "${num_samples}" ]]; then
+    run_cli_module src.cli.run_infer --model-path "${model_path}" --results-dir "${results_dir}" --split-name "${split_name}" --num-samples "${num_samples}"
+  else
+    run_cli_module src.cli.run_infer --model-path "${model_path}" --results-dir "${results_dir}" --split-name "${split_name}"
+  fi
+}
+
+run_judge_file() {
+  if [[ $# -lt 1 || $# -gt 2 ]]; then
+    usage
+    exit 1
+  fi
+
+  local input_path="$1"
+  local results_dir="${2:-${REPO_ROOT}/results/judge_results}"
+  require_gemini_key
+  run_cli_module src.cli.run_judge --input-path "${input_path}" --results-dir "${results_dir}"
+}
+
+run_infer_and_judge_model() {
   if [[ $# -lt 1 || $# -gt 4 ]]; then
     usage
     exit 1
@@ -92,12 +122,11 @@ run_eval_model() {
   local results_dir="${2:-${REPO_ROOT}/results/$(basename "${model_path}")_eval}"
   local split_name="${3:-test_only}"
   local num_samples="${4:-}"
-  require_gemini_key
-  if [[ -n "${num_samples}" ]]; then
-    run_cli_module src.cli.run_eval --model-path "${model_path}" --results-dir "${results_dir}" --split-name "${split_name}" --num-samples "${num_samples}"
-  else
-    run_cli_module src.cli.run_eval --model-path "${model_path}" --results-dir "${results_dir}" --split-name "${split_name}"
-  fi
+  local infer_dir="${results_dir}/inference"
+  local judge_dir="${results_dir}/judge"
+
+  run_infer_model "${model_path}" "${infer_dir}" "${split_name}" "${num_samples}"
+  run_judge_file "${infer_dir}/generated_responses.json" "${judge_dir}"
 }
 
 command_name="${1:-}"
@@ -123,30 +152,33 @@ case "${command_name}" in
   tmux-wait-gpu)
     run_tmux_wait_gpu "$@"
     ;;
-  eval-model)
-    run_eval_model "$@"
+  infer-model)
+    run_infer_model "$@"
+    ;;
+  judge-file)
+    run_judge_file "$@"
     ;;
   eval-sft)
-    run_eval_model "${REPO_ROOT}/models/sft_checkpoints/final" "${REPO_ROOT}/results/sft_eval" "test_only"
+    run_infer_and_judge_model "${REPO_ROOT}/models/sft_checkpoints/final" "${REPO_ROOT}/results/sft_eval" "test_only"
     ;;
   eval-kto)
-    run_eval_model "${REPO_ROOT}/models/kto_checkpoints/final" "${REPO_ROOT}/results/kto_eval" "kto_test"
+    run_infer_and_judge_model "${REPO_ROOT}/models/kto_checkpoints/final" "${REPO_ROOT}/results/kto_eval" "kto_test"
     ;;
   eval-all)
     if [[ -d "${REPO_ROOT}/models/sft_checkpoints/final" ]]; then
-      run_eval_model "${REPO_ROOT}/models/sft_checkpoints/final" "${REPO_ROOT}/results/sft_eval" "test_only"
+      run_infer_and_judge_model "${REPO_ROOT}/models/sft_checkpoints/final" "${REPO_ROOT}/results/sft_eval" "test_only"
     fi
     if [[ -d "${REPO_ROOT}/models/kto_checkpoints/final" ]]; then
-      run_eval_model "${REPO_ROOT}/models/kto_checkpoints/final" "${REPO_ROOT}/results/kto_eval" "kto_test"
+      run_infer_and_judge_model "${REPO_ROOT}/models/kto_checkpoints/final" "${REPO_ROOT}/results/kto_eval" "kto_test"
     fi
     ;;
   full-pipeline)
     run_cli_module src.cli.download_data
     run_cli_module src.cli.prepare_data
     run_cli_module src.cli.run_sft
-    run_eval_model "${REPO_ROOT}/models/sft_checkpoints/final" "${REPO_ROOT}/results/sft_eval" "test_only"
+    run_infer_and_judge_model "${REPO_ROOT}/models/sft_checkpoints/final" "${REPO_ROOT}/results/sft_eval" "test_only"
     run_cli_module src.cli.run_kto
-    run_eval_model "${REPO_ROOT}/models/kto_checkpoints/final" "${REPO_ROOT}/results/kto_eval" "kto_test"
+    run_infer_and_judge_model "${REPO_ROOT}/models/kto_checkpoints/final" "${REPO_ROOT}/results/kto_eval" "kto_test"
     ;;
   *)
     usage
