@@ -2,6 +2,12 @@
 model:
   path: "./models/kto_checkpoints/final"  # Path to final model
 
+qlora:
+  load_in_4bit: false
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_use_double_quant: true
+  bnb_4bit_quant_type: "nf4"
+
 prompt:
   system_prompt: |
     Bạn là chuyên gia tư vấn tuyển sinh và đào tạo học thuật.
@@ -20,7 +26,6 @@ prompt:
     3. Khi dữ liệu thiếu / mâu thuẫn
     - Nếu thiếu: nêu phần có sẵn và chỉ rõ phần chưa có.
     - Nếu mâu thuẫn: ưu tiên nguồn mới hơn hoặc chính thức hơn.
-    - Nếu chưa chắc chắn: khuyến nghị liên hệ đơn vị tuyển sinh.
 
     4. Chống ảo giác
     - Không tự thêm học phí, lịch thi, chỉ tiêu... nếu CONTEXT không có.
@@ -47,10 +52,10 @@ evaluation:
   num_samples: 2000  # Number of samples to evaluate
   batch_size: 8
   max_new_tokens: 512
-  temperature: 0
-  temperature: 0.2
-  top_p: 0.9
+  temperature: 0.1
+  top_p: 0.8
   repetition_penalty: 1.1
+  # no_repeat_ngram_size: 4
   do_sample: true
 
 metrics:

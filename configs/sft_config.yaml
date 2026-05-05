@@ -22,7 +22,6 @@ prompt:
     3. Khi dữ liệu thiếu / mâu thuẫn
     - Nếu thiếu: nêu phần có sẵn và chỉ rõ phần chưa có.
     - Nếu mâu thuẫn: ưu tiên nguồn mới hơn hoặc chính thức hơn.
-    - Nếu chưa chắc chắn: khuyến nghị liên hệ đơn vị tuyển sinh.
 
     4. Chống ảo giác
     - Không tự thêm học phí, lịch thi, chỉ tiêu... nếu CONTEXT không có.
