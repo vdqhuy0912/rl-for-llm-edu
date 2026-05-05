@@ -85,7 +85,9 @@ def classify_question_context(gemini_model, prompts: dict, question: str, contex
 
 
 def generate_responses(model, tokenizer, dataset, config):
-    system_prompt = config.get("prompt", {}).get("system_prompt")
+    prompt_config = config.get("prompt", {})
+    system_prompt = prompt_config.get("system_prompt")
+    enable_thinking = prompt_config.get("enable_thinking", False)
     responses = []
     num_samples = min(config["evaluation"]["num_samples"], len(dataset))
     batch_size = max(1, int(config["evaluation"].get("batch_size", 1)))
@@ -95,8 +97,12 @@ def generate_responses(model, tokenizer, dataset, config):
     generation_config.max_length = None
     generation_config.max_new_tokens = config["evaluation"]["max_new_tokens"]
     generation_config.do_sample = config["evaluation"]["do_sample"]
-    generation_config.pad_token_id = tokenizer.eos_token_id
-    generation_config.eos_token_id = tokenizer.eos_token_id
+    if generation_config.eos_token_id is None:
+        generation_config.eos_token_id = tokenizer.eos_token_id
+    if generation_config.pad_token_id is None:
+        generation_config.pad_token_id = (
+            tokenizer.pad_token_id if tokenizer.pad_token_id is not None else generation_config.eos_token_id
+        )
     generation_config.repetition_penalty = config["evaluation"].get("repetition_penalty", 1.0)
     # generation_config.no_repeat_ngram_size = config["evaluation"].get("no_repeat_ngram_size", 0)
     if generation_config.do_sample:
@@ -122,6 +128,9 @@ def generate_responses(model, tokenizer, dataset, config):
                         example["question"],
                         example["context"],
                         system_prompt=system_prompt,
+                        tokenizer=tokenizer,
+                        add_generation_prompt=True,
+                        enable_thinking=enable_thinking,
                     )
                 )
 
@@ -138,10 +147,10 @@ def generate_responses(model, tokenizer, dataset, config):
                     **inputs,
                     generation_config=generation_config,
                 )
-                input_lengths = inputs["attention_mask"].sum(dim=1).tolist()
+                prompt_length = inputs["input_ids"].shape[1]
 
-                for example, generated_ids, input_length in zip(batch_examples, output_ids, input_lengths):
-                    generated_tokens = generated_ids[int(input_length):]
+                for example, generated_ids in zip(batch_examples, output_ids):
+                    generated_tokens = generated_ids[prompt_length:]
                     response = tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
                     responses.append(
                         {

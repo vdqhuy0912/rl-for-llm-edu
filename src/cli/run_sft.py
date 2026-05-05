@@ -28,7 +28,9 @@ from src.utils.model_utils import (
 
 
 def load_train_and_eval_datasets(config: dict, tokenizer):
-    system_prompt = config.get("prompt", {}).get("system_prompt")
+    prompt_config = config.get("prompt", {})
+    system_prompt = prompt_config.get("system_prompt")
+    enable_thinking = prompt_config.get("enable_thinking", False)
     try:
         train_dataset = load_saved_split_dataset("sft_train")
         train_size = len(train_dataset)
@@ -41,6 +43,7 @@ def load_train_and_eval_datasets(config: dict, tokenizer):
         tokenizer,
         max_length=config["data"]["max_length"],
         system_prompt=system_prompt,
+        enable_thinking=enable_thinking,
     )
 
     try:
@@ -58,6 +61,7 @@ def load_train_and_eval_datasets(config: dict, tokenizer):
         tokenizer,
         max_length=config["data"]["max_length"],
         system_prompt=system_prompt,
+        enable_thinking=enable_thinking,
     )
     return train_dataset, eval_dataset, train_size, eval_size
 

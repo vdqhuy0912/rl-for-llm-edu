@@ -67,16 +67,93 @@ def build_instruction_prompt(
     question: str,
     context: Optional[str] = None,
     system_prompt: Optional[str] = None,
+    tokenizer: Optional[AutoTokenizer] = None,
+    add_generation_prompt: bool = True,
+    enable_thinking: Optional[bool] = False,
 ) -> str:
-    """Build a stable prompt format shared by SFT, KTO and evaluation."""
-    prompt = ""
-    if system_prompt:
-        prompt += "### Chỉ dẫn hệ thống\n" + system_prompt.strip() + "\n\n"
-    prompt += "### Câu hỏi\n" + question.strip()
+    """Build a Qwen ChatML prompt shared by SFT, KTO and evaluation."""
+    messages = build_chat_messages(question, context=context, system_prompt=system_prompt)
+    return render_chat_template(
+        messages,
+        tokenizer=tokenizer,
+        add_generation_prompt=add_generation_prompt,
+        enable_thinking=enable_thinking,
+    )
+
+
+def build_user_content(question: str, context: Optional[str] = None) -> str:
+    """Build the user turn content while keeping Qwen ChatML roles separate."""
+    content = "Câu hỏi:\n" + question.strip()
     if context:
-        prompt += "\n\n### Ngữ cảnh tham chiếu\n" + context.strip()
-    prompt += "\n\n### Trả lời\n"
-    return prompt
+        content += "\n\nNgữ cảnh tham chiếu:\n" + context.strip()
+    return content
+
+
+def build_chat_messages(
+    question: str,
+    context: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    answer: Optional[str] = None,
+) -> list[dict[str, str]]:
+    """Create Qwen-compatible chat messages for a QA sample."""
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt.strip()})
+    messages.append({"role": "user", "content": build_user_content(question, context=context)})
+    if answer is not None:
+        messages.append({"role": "assistant", "content": answer.strip()})
+    return messages
+
+
+def render_chat_template(
+    messages: list[dict[str, str]],
+    tokenizer: Optional[AutoTokenizer] = None,
+    add_generation_prompt: bool = False,
+    enable_thinking: Optional[bool] = False,
+) -> str:
+    """Render messages with the tokenizer's Qwen chat template, with a ChatML fallback."""
+    if tokenizer is not None and getattr(tokenizer, "chat_template", None):
+        kwargs = {
+            "tokenize": False,
+            "add_generation_prompt": add_generation_prompt,
+        }
+        if enable_thinking is not None:
+            kwargs["enable_thinking"] = enable_thinking
+        try:
+            return tokenizer.apply_chat_template(messages, **kwargs)
+        except TypeError:
+            kwargs.pop("enable_thinking", None)
+            return tokenizer.apply_chat_template(messages, **kwargs)
+
+    rendered = ""
+    for message in messages:
+        rendered += f"<|im_start|>{message['role']}\n{message['content'].strip()}<|im_end|>\n"
+    if add_generation_prompt:
+        rendered += "<|im_start|>assistant\n"
+    return rendered
+
+
+def build_instruction_response_text(
+    question: str,
+    answer: str,
+    context: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    tokenizer: Optional[AutoTokenizer] = None,
+    enable_thinking: Optional[bool] = False,
+) -> str:
+    """Build a complete Qwen ChatML training text including the assistant answer."""
+    messages = build_chat_messages(
+        question,
+        context=context,
+        system_prompt=system_prompt,
+        answer=answer,
+    )
+    return render_chat_template(
+        messages,
+        tokenizer=tokenizer,
+        add_generation_prompt=False,
+        enable_thinking=enable_thinking,
+    )
 
 
 def dataset_name_to_local_dir(dataset_name: str, root: Path = RAW_DATA_ROOT) -> Path:
@@ -210,6 +287,7 @@ def preprocess_sft_data(
     tokenizer: AutoTokenizer,
     max_length: int = 2048,
     system_prompt: Optional[str] = None,
+    enable_thinking: Optional[bool] = False,
 ):
     """Preprocess data for SFT training."""
 
@@ -220,12 +298,14 @@ def preprocess_sft_data(
             row = {column: values[index] for column, values in examples.items()}
             normalized = normalize_qa_example(row)
             texts.append(
-                build_instruction_prompt(
+                build_instruction_response_text(
                     normalized["question"],
+                    normalized["answer"],
                     normalized["context"],
                     system_prompt=system_prompt,
+                    tokenizer=tokenizer,
+                    enable_thinking=enable_thinking,
                 )
-                + normalized["answer"]
             )
 
         return tokenizer(
@@ -306,6 +386,7 @@ def prepare_kto_data(
     dataset: Dataset,
     tokenizer: Optional[AutoTokenizer] = None,
     system_prompt: Optional[str] = None,
+    enable_thinking: Optional[bool] = False,
 ) -> Dataset:
     """Prepare KTO data by converting QA samples into positive/negative preference rows."""
     kto_data = []
@@ -319,13 +400,38 @@ def prepare_kto_data(
             normalized["question"],
             normalized["context"],
             system_prompt=system_prompt,
+            tokenizer=tokenizer,
+            add_generation_prompt=True,
+            enable_thinking=enable_thinking,
         )
         negative = _build_undesirable_completion(normalized)
+        positive_text = build_instruction_response_text(
+            normalized["question"],
+            normalized["answer"],
+            normalized["context"],
+            system_prompt=system_prompt,
+            tokenizer=tokenizer,
+            enable_thinking=enable_thinking,
+        )
+        negative_text = build_instruction_response_text(
+            normalized["question"],
+            negative["completion"],
+            normalized["context"],
+            system_prompt=system_prompt,
+            tokenizer=tokenizer,
+            enable_thinking=enable_thinking,
+        )
+        positive_completion = (
+            positive_text[len(prompt):] if positive_text.startswith(prompt) else normalized["answer"]
+        )
+        negative_completion = (
+            negative_text[len(prompt):] if negative_text.startswith(prompt) else negative["completion"]
+        )
 
         kto_data.append(
             {
                 "prompt": prompt,
-                "completion": normalized["answer"],
+                "completion": positive_completion,
                 "label": True,
                 "source_question": normalized["question"],
                 "source_context": normalized["context"],
@@ -337,7 +443,7 @@ def prepare_kto_data(
         kto_data.append(
             {
                 "prompt": prompt,
-                "completion": negative["completion"],
+                "completion": negative_completion,
                 "label": False,
                 "source_question": normalized["question"],
                 "source_context": normalized["context"],

@@ -20,7 +20,9 @@ from src.utils.model_utils import (
 
 
 def load_train_and_eval_datasets(config: dict, tokenizer):
-    system_prompt = config.get("prompt", {}).get("system_prompt")
+    prompt_config = config.get("prompt", {})
+    system_prompt = prompt_config.get("system_prompt")
+    enable_thinking = prompt_config.get("enable_thinking", False)
     try:
         train_dataset = load_saved_split_dataset("kto_train")
         train_size = len(train_dataset)
@@ -31,7 +33,12 @@ def load_train_and_eval_datasets(config: dict, tokenizer):
     train_max_samples = config["data"].get("train_max_samples")
     if train_max_samples:
         train_dataset = train_dataset.select(range(min(train_max_samples, len(train_dataset))))
-    train_dataset = prepare_kto_data(train_dataset, tokenizer, system_prompt=system_prompt)
+    train_dataset = prepare_kto_data(
+        train_dataset,
+        tokenizer,
+        system_prompt=system_prompt,
+        enable_thinking=enable_thinking,
+    )
 
     try:
         eval_dataset = load_saved_split_dataset("kto_val")
@@ -42,7 +49,12 @@ def load_train_and_eval_datasets(config: dict, tokenizer):
     if eval_max_samples:
         eval_dataset = eval_dataset.select(range(min(eval_max_samples, len(eval_dataset))))
     eval_size = len(eval_dataset)
-    eval_dataset = prepare_kto_data(eval_dataset, tokenizer, system_prompt=system_prompt)
+    eval_dataset = prepare_kto_data(
+        eval_dataset,
+        tokenizer,
+        system_prompt=system_prompt,
+        enable_thinking=enable_thinking,
+    )
     return train_dataset, eval_dataset, train_size, eval_size
 
 

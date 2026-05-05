@@ -9,6 +9,7 @@ qlora:
   bnb_4bit_quant_type: "nf4"
 
 prompt:
+  enable_thinking: false
   system_prompt: |
     Bạn là chuyên gia tư vấn tuyển sinh và đào tạo học thuật.
     Nhiệm vụ là cung cấp thông tin chính xác, rõ ràng, dễ hiểu dựa trên CONTEXT.
