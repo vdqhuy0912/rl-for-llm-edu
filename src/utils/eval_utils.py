@@ -96,8 +96,11 @@ def generate_responses(model, tokenizer, dataset, config):
     generation_config.max_new_tokens = config["evaluation"]["max_new_tokens"]
     generation_config.do_sample = config["evaluation"]["do_sample"]
     generation_config.pad_token_id = tokenizer.eos_token_id
+    generation_config.eos_token_id = tokenizer.eos_token_id
+    generation_config.repetition_penalty = config["evaluation"].get("repetition_penalty", 1.0)
     if generation_config.do_sample:
         generation_config.temperature = config["evaluation"]["temperature"]
+        generation_config.top_p = config["evaluation"].get("top_p", 1.0)
     else:
         generation_config.temperature = None
         generation_config.top_p = None
