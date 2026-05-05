@@ -104,7 +104,7 @@ def generate_responses(model, tokenizer, dataset, config):
             tokenizer.pad_token_id if tokenizer.pad_token_id is not None else generation_config.eos_token_id
         )
     generation_config.repetition_penalty = config["evaluation"].get("repetition_penalty", 1.0)
-    # generation_config.no_repeat_ngram_size = config["evaluation"].get("no_repeat_ngram_size", 0)
+    generation_config.no_repeat_ngram_size = config["evaluation"].get("no_repeat_ngram_size", 0)
     if generation_config.do_sample:
         generation_config.temperature = config["evaluation"]["temperature"]
         generation_config.top_p = config["evaluation"].get("top_p", 1.0)
