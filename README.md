@@ -183,10 +183,55 @@ tail -f logs/train_sft_*.log
 
 ```
 
+### Train KTO từ generated responses đã được Gemini judge
+
+Luồng này khác với KTO mặc định. KTO mặc định tự tạo `positive=answer` và `negative=synthetic heuristic` từ `kto_train/kto_val`. Luồng judged-generated sẽ:
+
+1. dùng model SFT generate trên `kto_train` và `kto_val`
+2. dùng Gemini judge các `generated_answer`
+3. convert kết quả judge thành dataset KTO có sẵn `prompt/completion/label`
+4. train KTO từ dataset đã convert
+
+`CLASS_3` không được dùng để train trong luồng này. Mọi sample được classifier đánh là `CLASS_3` sẽ bị loại khi build KTO data.
+
+```bash
+# 1. Generate trên train/val bằng SFT final
+./scripts/workflow.sh infer-model ./models/sft_checkpoints/final ./results/judged_kto_train kto_train
+./scripts/workflow.sh infer-model ./models/sft_checkpoints/final ./results/judged_kto_val kto_val
+
+# 2. Gemini judge generated responses
+./scripts/workflow.sh judge-file ./results/judged_kto_train/generated_responses.json ./results/judged_kto_train
+./scripts/workflow.sh judge-file ./results/judged_kto_val/generated_responses.json ./results/judged_kto_val
+
+# 3. Build preconverted KTO datasets
+./scripts/workflow.sh build-judged-kto-data \
+  ./results/judged_kto_train/evaluation_results.json \
+  ./results/judged_kto_val/evaluation_results.json
+
+# 4. Train KTO từ judged datasets
+./scripts/workflow.sh train-kto-judged
+```
+
+Output dataset mặc định:
+- `data/splits/kto_judged_train`
+- `data/splits/kto_judged_val`
+
+Thống kê build data được ghi ở:
+- `data/splits/kto_judged_train/build_stats.json`
+- `data/splits/kto_judged_val/build_stats.json`
+
+Rule tạo label:
+- `CLASS_1`: `label=False` nếu có lỗi nặng như contradiction, fabrication, unverifiable, baseless/contradict context, safety harm/ethics; `label=True` nếu không có violation; còn lại `drop`.
+- `CLASS_2`: `label=False` nếu có behavior failure hoặc `context_usage.rating = BAD`; `label=True` nếu có hành vi clarify/abstain/multi-interpret đúng; còn lại `drop`.
+- `CLASS_3`: luôn bỏ qua, không train.
+
+Chi tiết đầy đủ nằm trong `docs/kto_data_creation.md`.
+
 ### Chạy trực tiếp Python modules
 ```bash
 python3 -m src.cli.run_sft
 python3 -m src.cli.run_kto
+python3 -m src.cli.build_judged_kto_data --input-path ./results/judged_kto_train/evaluation_results.json --output-dir ./data/splits/kto_judged_train
 python3 -m src.cli.run_infer --model-path ./models/kto_checkpoints/final --results-dir ./results/kto_infer --split-name kto_test
 python3 -m src.cli.run_judge --input-path ./results/kto_infer/generated_responses.json --results-dir ./results/kto_judge
 ```
@@ -264,6 +309,20 @@ Chạy KTO mặc định bằng QLoRA:
 ./scripts/train_kto.sh
 ```
 
+Chạy KTO từ judged-generated datasets:
+
+```bash
+./scripts/workflow.sh train-kto-judged
+```
+
+Hoặc truyền path thủ công:
+
+```bash
+python3 -m src.cli.run_kto \
+  --train-kto-data ./data/splits/kto_judged_train \
+  --eval-kto-data ./data/splits/kto_judged_val
+```
+
 Ép chạy LoRA fp16:
 
 ```bash
@@ -313,6 +372,8 @@ Gemini judge hiện dùng model `gemini-3.1-flash-lite-preview` trong `configs/e
 - `load_in_4bit: true` hoặc `optim: paged_adamw_8bit` đều cần `bitsandbytes>=0.46.1`.
 - SFT chọn LoRA/QLoRA bằng `configs/sft_config.yaml -> qlora.load_in_4bit`.
 - KTO chọn QLoRA/LoRA bằng `configs/kto_config.yaml -> tuning.mode`.
+- KTO mặc định dùng synthetic negative từ `kto_train/kto_val`; nếu dùng judged-generated KTO, build `data/splits/kto_judged_train` và `data/splits/kto_judged_val`, rồi chạy `workflow.sh train-kto-judged`.
+- Judged-generated KTO loại toàn bộ `CLASS_3` khỏi train.
 - Training logs được lưu trong `logs/`.
 - Checkpoints trung gian được lưu theo `save_steps` của Hugging Face/TRL trong `models/sft_checkpoints/` và `models/kto_checkpoints/`.
 - Final models được lưu ở:

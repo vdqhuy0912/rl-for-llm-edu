@@ -4,11 +4,13 @@
 import argparse
 
 import torch
+from datasets import Dataset, load_from_disk
 from peft import AutoPeftModelForCausalLM, LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import KTOConfig, KTOTrainer
 
 from src.utils.data_utils import load_project_dataset, load_saved_split_dataset, prepare_kto_data
+from src.utils.eval_utils import load_records
 from src.utils.model_utils import (
     ensure_bitsandbytes_available,
     ensure_output_dir,
@@ -19,7 +21,34 @@ from src.utils.model_utils import (
 )
 
 
+def load_preconverted_kto_dataset(path: str) -> Dataset:
+    resolved_path = resolve_project_path(path)
+    if resolved_path.is_dir():
+        dataset = load_from_disk(str(resolved_path))
+    else:
+        dataset = Dataset.from_list(load_records(resolved_path))
+
+    required_columns = {"prompt", "completion", "label"}
+    missing_columns = required_columns.difference(dataset.column_names)
+    if missing_columns:
+        raise ValueError(
+            f"Preconverted KTO dataset at {resolved_path} is missing columns: {sorted(missing_columns)}"
+        )
+    return dataset
+
+
 def load_train_and_eval_datasets(config: dict, tokenizer):
+    data_config = config.get("data", {})
+
+    train_kto_data = data_config.get("train_kto_data")
+    eval_kto_data = data_config.get("eval_kto_data")
+    if train_kto_data or eval_kto_data:
+        if not train_kto_data or not eval_kto_data:
+            raise ValueError("Both data.train_kto_data and data.eval_kto_data are required for preconverted KTO.")
+        train_dataset = load_preconverted_kto_dataset(train_kto_data)
+        eval_dataset = load_preconverted_kto_dataset(eval_kto_data)
+        return train_dataset, eval_dataset, len(train_dataset), len(eval_dataset)
+
     prompt_config = config.get("prompt", {})
     system_prompt = prompt_config.get("system_prompt")
     enable_thinking = prompt_config.get("enable_thinking", False)
@@ -65,6 +94,14 @@ def parse_args():
     parser.add_argument("--max-steps", type=int, help="Override Trainer max_steps.")
     parser.add_argument("--num-train-samples", type=int, help="Limit raw KTO train samples before conversion.")
     parser.add_argument("--num-eval-samples", type=int, help="Limit raw KTO eval samples before conversion.")
+    parser.add_argument(
+        "--train-kto-data",
+        help="Path to a preconverted KTO train dataset containing prompt/completion/label.",
+    )
+    parser.add_argument(
+        "--eval-kto-data",
+        help="Path to a preconverted KTO eval dataset containing prompt/completion/label.",
+    )
     parser.add_argument("--max-length", type=int, help="Override KTO max sequence length.")
     parser.add_argument("--per-device-train-batch-size", type=int, help="Override train batch size per device.")
     parser.add_argument("--per-device-eval-batch-size", type=int, help="Override eval batch size per device.")
@@ -128,6 +165,10 @@ def main():
         config["data"]["train_max_samples"] = args.num_train_samples
     if args.num_eval_samples is not None:
         config["data"]["eval_max_samples"] = args.num_eval_samples
+    if args.train_kto_data:
+        config["data"]["train_kto_data"] = args.train_kto_data
+    if args.eval_kto_data:
+        config["data"]["eval_kto_data"] = args.eval_kto_data
     if args.max_length is not None:
         config["kto"]["max_length"] = args.max_length
     if args.per_device_train_batch_size is not None:
