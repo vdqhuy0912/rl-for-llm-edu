@@ -3,7 +3,9 @@
 import copy
 import json
 import os
+import random
 import re
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +20,31 @@ CLASSIFIER_MARKER = 'PROMPT_QA_CLASSIFIER = """'
 CLASS1_MARKER = 'PROMPT_QA_CLASS1 = """'
 CLASS2_MARKER = 'PROMPT_QA_CLASS2 = """'
 CLASS3_MARKER = 'PROMPT_QA_CLASS3 = """'
+GEMINI_RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def is_retryable_gemini_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code in GEMINI_RETRY_STATUS_CODES:
+        return True
+    message = str(exc)
+    return any(f"{status_code}" in message for status_code in GEMINI_RETRY_STATUS_CODES)
+
+
+def generate_gemini_text(client, model_name: str, prompt: str, *, max_retries: int = 5) -> str:
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.models.generate_content(model=model_name, contents=prompt)
+            return response.text or ""
+        except Exception as exc:
+            if attempt >= max_retries or not is_retryable_gemini_error(exc):
+                raise
+            sleep_seconds = min(60.0, (2 ** attempt) + random.uniform(0.0, 1.0))
+            print(
+                f"Gemini request failed with retryable error: {exc}. "
+                f"Retrying in {sleep_seconds:.1f}s ({attempt + 1}/{max_retries})"
+            )
+            time.sleep(sleep_seconds)
 
 
 def setup_gemini(api_key: str, model_name: str):
@@ -72,8 +99,7 @@ def render_answer_prompt(template: str, question: str, context: str, answer: str
 def classify_question_context(gemini_model, prompts: dict, question: str, context: str) -> dict:
     client, model_name = gemini_model
     prompt = render_classifier_prompt(prompts["classifier"], question, context)
-    response = client.models.generate_content(model=model_name, contents=prompt)
-    text = (response.text or "").strip()
+    text = generate_gemini_text(client, model_name, prompt).strip()
 
     try:
         return json.loads(text)
@@ -203,7 +229,7 @@ def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config):
                 item["context"],
                 item["generated_answer"],
             )
-            evaluation_text = client.models.generate_content(model=model_name, contents=prompt).text or ""
+            evaluation_text = generate_gemini_text(client, model_name, prompt)
         elif class_label == "CLASS_2":
             evaluation_mode = "PROMPT_QA_CLASS2"
             prompt = render_answer_prompt(
@@ -212,7 +238,7 @@ def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config):
                 item["context"],
                 item["generated_answer"],
             )
-            evaluation_text = client.models.generate_content(model=model_name, contents=prompt).text or ""
+            evaluation_text = generate_gemini_text(client, model_name, prompt)
         elif class_label == "CLASS_3":
             evaluation_mode = "PROMPT_QA_CLASS3"
             prompt = render_answer_prompt(
@@ -221,7 +247,7 @@ def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config):
                 item["context"],
                 item["generated_answer"],
             )
-            evaluation_text = client.models.generate_content(model=model_name, contents=prompt).text or ""
+            evaluation_text = generate_gemini_text(client, model_name, prompt)
         else:
             evaluation_mode = config["metrics"]["fallback_for_class_3"]
 
