@@ -10,9 +10,12 @@ Usage:
   scripts/workflow.sh prepare-data
   scripts/workflow.sh train-sft
   scripts/workflow.sh train-kto
+  scripts/workflow.sh build-judged-kto-data <train_evaluation_results.json> <val_evaluation_results.json> [train_output_dir] [val_output_dir]
+  scripts/workflow.sh train-kto-judged [train_data_dir] [val_data_dir]
   scripts/workflow.sh tmux-wait-gpu <session_name> <command> [args...]
   scripts/workflow.sh infer-model <model_path> [results_dir] [split_name] [num_samples]
   scripts/workflow.sh judge-file <input_path> [results_dir]
+  scripts/workflow.sh rerun-oom-judge <generated_responses.json> [evaluation_results.json] [results_dir] [model_path]
   scripts/workflow.sh eval-sft
   scripts/workflow.sh eval-kto
   scripts/workflow.sh eval-all
@@ -112,6 +115,59 @@ run_judge_file() {
   run_cli_module src.cli.run_judge --input-path "${input_path}" --results-dir "${results_dir}"
 }
 
+run_build_judged_kto_data() {
+  if [[ $# -lt 2 || $# -gt 4 ]]; then
+    usage
+    exit 1
+  fi
+
+  local train_input="$1"
+  local val_input="$2"
+  local train_output="${3:-${REPO_ROOT}/data/splits/kto_judged_train}"
+  local val_output="${4:-${REPO_ROOT}/data/splits/kto_judged_val}"
+
+  run_cli_module src.cli.build_judged_kto_data --input-path "${train_input}" --output-dir "${train_output}"
+  run_cli_module src.cli.build_judged_kto_data --input-path "${val_input}" --output-dir "${val_output}"
+}
+
+run_train_kto_judged() {
+  if [[ $# -gt 2 ]]; then
+    usage
+    exit 1
+  fi
+
+  local train_data="${1:-${REPO_ROOT}/data/splits/kto_judged_train}"
+  local val_data="${2:-${REPO_ROOT}/data/splits/kto_judged_val}"
+
+  run_cli_module src.cli.run_kto --train-kto-data "${train_data}" --eval-kto-data "${val_data}"
+}
+
+run_rerun_oom_judge() {
+  if [[ $# -lt 1 || $# -gt 4 ]]; then
+    usage
+    exit 1
+  fi
+
+  local generated_path="$1"
+  local evaluation_path="${2:-}"
+  local results_dir="${3:-${REPO_ROOT}/results/oom_rerun}"
+  local model_path="${4:-${REPO_ROOT}/models/sft_checkpoints/final}"
+
+  require_gemini_key
+  if [[ -n "${evaluation_path}" && "${evaluation_path}" != "-" ]]; then
+    run_cli_module src.cli.rerun_oom_judge \
+      --generated-path "${generated_path}" \
+      --evaluation-path "${evaluation_path}" \
+      --results-dir "${results_dir}" \
+      --model-path "${model_path}"
+  else
+    run_cli_module src.cli.rerun_oom_judge \
+      --generated-path "${generated_path}" \
+      --results-dir "${results_dir}" \
+      --model-path "${model_path}"
+  fi
+}
+
 run_infer_and_judge_model() {
   if [[ $# -lt 1 || $# -gt 4 ]]; then
     usage
@@ -149,6 +205,12 @@ case "${command_name}" in
   train-kto)
     run_cli_module src.cli.run_kto "$@"
     ;;
+  build-judged-kto-data)
+    run_build_judged_kto_data "$@"
+    ;;
+  train-kto-judged)
+    run_train_kto_judged "$@"
+    ;;
   tmux-wait-gpu)
     run_tmux_wait_gpu "$@"
     ;;
@@ -157,6 +219,9 @@ case "${command_name}" in
     ;;
   judge-file)
     run_judge_file "$@"
+    ;;
+  rerun-oom-judge)
+    run_rerun_oom_judge "$@"
     ;;
   eval-sft)
     run_infer_and_judge_model "${REPO_ROOT}/models/sft_checkpoints/final" "${REPO_ROOT}/results/sft_eval" "test_only"
