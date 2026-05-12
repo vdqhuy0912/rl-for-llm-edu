@@ -9,6 +9,27 @@ Các placeholder cần sửa theo cluster:
 - `<REPO>`: thư mục repo trên server, ví dụ `$HOME/rl-for-llm-edu`.
 - `<CONDA_BASE>`: đường dẫn conda, thường là `$HOME/miniconda3` hoặc `$HOME/anaconda3`.
 
+Repo hiện có sẵn các file job để sửa/chạy nhanh trong `scripts/slurm/`. Với server hiện tại, partition đã đặt là `defq`.
+
+Chạy nhanh trên server:
+
+```bash
+cd ~/vqhuy/rl-for-llm-edu
+mkdir -p logs/slurm
+
+sbatch scripts/slurm/00_test_gpu.sbatch
+sbatch scripts/slurm/01_download_data.sbatch
+sbatch scripts/slurm/02_prepare_data.sbatch
+sbatch scripts/slurm/03_train_sft.sbatch
+sbatch scripts/slurm/04_infer_sft.sbatch
+sbatch scripts/slurm/05_judge_sft.sbatch
+sbatch scripts/slurm/06_train_kto.sbatch
+sbatch scripts/slurm/07_infer_kto.sbatch
+sbatch scripts/slurm/08_judge_kto.sbatch
+```
+
+Xem thêm: `scripts/slurm/README.md`.
+
 ## 0. Giải thích các thành phần lệnh
 
 ### Lệnh kiểm tra Slurm/GPU
