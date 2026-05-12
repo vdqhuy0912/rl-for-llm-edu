@@ -92,6 +92,11 @@ data:
   train_dataset: "vnu-llm2023-ftdata/qa-daotao-cho-rl"
   val_dataset: "vnu-llm2023-ftdata/qa-daotao-cho-rl"
   test_dataset: "vnu-llm2023-ftdata/qa-daotao-sft"
+  # Optional: set these to train from Gemini-judged generated responses that
+  # already contain prompt/completion/label. When set, run_kto skips the
+  # synthetic gold-vs-negative conversion.
+  # train_kto_data: "data/splits/kto_judged_train"
+  # eval_kto_data: "data/splits/kto_judged_val"
   preprocessing_num_workers: 4
   # eval_max_samples: 256
   conversion:
