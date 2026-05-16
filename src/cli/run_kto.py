@@ -2,10 +2,13 @@
 """Run Knowledge Transfer Optimization (KTO) training."""
 
 import argparse
+import random
+from collections.abc import Iterator
 
 import torch
 from datasets import Dataset, load_from_disk
 from peft import AutoPeftModelForCausalLM, LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from torch.utils.data import Sampler
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import KTOConfig, KTOTrainer
 
@@ -19,6 +22,47 @@ from src.utils.model_utils import (
     resolve_project_path,
     setup_logging,
 )
+
+
+class AlternatingLabelSampler(Sampler[int]):
+    """Yield alternating desirable/undesirable indices so KTO batches are non-empty on both sides."""
+
+    def __init__(self, labels: list[bool], seed: int) -> None:
+        self.positive_indices = [index for index, label in enumerate(labels) if label is True]
+        self.negative_indices = [index for index, label in enumerate(labels) if label is False]
+        self.seed = seed
+        self.epoch = 0
+        self.length = 2 * min(len(self.positive_indices), len(self.negative_indices))
+        if self.length == 0:
+            raise ValueError("Balanced KTO sampling requires at least one positive and one negative example.")
+
+    def __iter__(self) -> Iterator[int]:
+        rng = random.Random(self.seed + self.epoch)
+        self.epoch += 1
+        positives = list(self.positive_indices)
+        negatives = list(self.negative_indices)
+        rng.shuffle(positives)
+        rng.shuffle(negatives)
+        for positive, negative in zip(positives, negatives):
+            if rng.random() < 0.5:
+                yield positive
+                yield negative
+            else:
+                yield negative
+                yield positive
+
+    def __len__(self) -> int:
+        return self.length
+
+
+class BalancedKTOTrainer(KTOTrainer):
+    def _get_train_sampler(self, dataset=None):
+        train_dataset = dataset if dataset is not None else self.train_dataset
+        if train_dataset is None or not hasattr(train_dataset, "__len__"):
+            return super()._get_train_sampler(dataset) if dataset is not None else super()._get_train_sampler()
+        if "label" not in getattr(train_dataset, "column_names", []):
+            return super()._get_train_sampler(dataset) if dataset is not None else super()._get_train_sampler()
+        return AlternatingLabelSampler(list(train_dataset["label"]), seed=self.args.seed)
 
 
 def load_preconverted_kto_dataset(path: str) -> Dataset:
@@ -274,7 +318,7 @@ def main():
         },
     )
 
-    trainer = KTOTrainer(
+    trainer = BalancedKTOTrainer(
         model=model,
         args=kto_config,
         train_dataset=train_dataset,
