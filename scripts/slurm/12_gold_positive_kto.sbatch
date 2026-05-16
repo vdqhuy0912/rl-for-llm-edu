@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=rl-prepare
+#SBATCH --job-name=rl-kto-gold
 #SBATCH --partition=defq
 #SBATCH --nodelist=node002
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --time=02:00:00
+#SBATCH --mem=96G
+#SBATCH --time=36:00:00
 #SBATCH --output=logs/slurm/%x-%j.out
 #SBATCH --error=logs/slurm/%x-%j.err
 
 set -euo pipefail
-
-# EDIT nhanh:
-# - job này không xin GPU vì chỉ chuẩn hóa split dữ liệu
-# - nếu cluster bắt buộc xin GPU trên defq, thêm "#SBATCH --gres=gpu:1"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/scripts/workflow.sh" ]]; then
@@ -25,4 +22,7 @@ mkdir -p logs/slurm
 
 source "${REPO_ROOT}/scripts/slurm/activate_sft_env.sh"
 
-bash scripts/workflow.sh prepare-data
+export TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+bash scripts/run_gold_positive_kto_pipeline.sh

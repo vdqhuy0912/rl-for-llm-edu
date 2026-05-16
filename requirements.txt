@@ -3,7 +3,7 @@ torch>=2.0.0
 transformers>=4.30.0
 datasets>=2.10.0
 accelerate>=0.20.0
-peft>=0.4.0
+peft>=0.19.1
 trl>=0.7.0  # For KTO training
 bitsandbytes>=0.46.1
 
@@ -11,6 +11,7 @@ bitsandbytes>=0.46.1
 pandas
 numpy
 scikit-learn
+datasets
 
 # Hugging Face ecosystem
 huggingface_hub
@@ -26,6 +27,8 @@ wandb  # For logging
 python-dotenv
 pyyaml
 jupyter
+matplotlib
+tabulate
 
 # Optional for development
 black

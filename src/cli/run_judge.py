@@ -10,7 +10,7 @@ from src.utils.eval_utils import (
     load_records,
     save_records,
 )
-from src.utils.model_utils import load_config, setup_logging
+from src.utils.model_utils import ensure_output_dir, load_config, setup_logging
 
 
 def parse_args():
@@ -34,11 +34,21 @@ def main():
     responses = load_records(args.input_path)
     logger.info("Loaded %s generated responses", len(responses))
 
+    results_dir = ensure_output_dir(args.results_dir or "./results")
+    checkpoint_path = results_dir / "evaluation_results.partial.jsonl"
+    logger.info("Incremental checkpoint: %s", checkpoint_path)
+
     gemini_model = load_gemini_model_from_config(config)
     prompt_bundle = load_judge_prompts(config["metrics"]["prompt_file"])
-    evaluations = evaluate_with_gemini(gemini_model, responses, prompt_bundle, config)
+    evaluations = evaluate_with_gemini(
+        gemini_model,
+        responses,
+        prompt_bundle,
+        config,
+        checkpoint_path=checkpoint_path,
+    )
 
-    json_path, _ = save_records(evaluations, args.results_dir or "./results", "evaluation_results")
+    json_path, _ = save_records(evaluations, results_dir, "evaluation_results")
     logger.info("Gemini judging completed. Results saved to %s", json_path)
     print(f"Evaluated {len(evaluations)} responses")
     print(f"Results saved to: {json_path}")

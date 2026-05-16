@@ -96,18 +96,34 @@ def render_answer_prompt(template: str, question: str, context: str, answer: str
     return template.replace("{Q}", question).replace("{C}", context).replace("{A_gen}", answer)
 
 
+def parse_json_object(text: str) -> dict:
+    """Parse a Gemini JSON response, tolerating markdown fences and surrounding prose."""
+    stripped = (text or "").strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?", "", stripped, flags=re.IGNORECASE).strip()
+        stripped = re.sub(r"```$", "", stripped).strip()
+
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
 def classify_question_context(gemini_model, prompts: dict, question: str, context: str) -> dict:
     client, model_name = gemini_model
     prompt = render_classifier_prompt(prompts["classifier"], question, context)
     text = generate_gemini_text(client, model_name, prompt).strip()
-
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if not match:
-            raise
-        return json.loads(match.group(0))
+        return parse_json_object(text)
+    except json.JSONDecodeError as exc:
+        return {
+            "classification": "PARSE_ERROR",
+            "parse_error": str(exc),
+            "raw_response": text,
+        }
 
 
 def generate_responses(model, tokenizer, dataset, config):
@@ -205,61 +221,119 @@ def generate_responses(model, tokenizer, dataset, config):
     return responses
 
 
-def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config):
+def load_jsonl_records(path: str | Path) -> list[dict]:
+    path = resolve_project_path(path)
+    if not path.exists():
+        return []
+    records = []
+    with path.open(encoding="utf-8") as file:
+        for line_no, line in enumerate(file, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                print(f"Skipping invalid JSONL checkpoint line {line_no} in {path}: {exc}")
+    return records
+
+
+def append_jsonl_record(path: str | Path, record: dict) -> None:
+    path = resolve_project_path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(record, ensure_ascii=False) + "\n")
+        file.flush()
+        os.fsync(file.fileno())
+
+
+def judge_error_record(item: dict, index: int, stage: str, exc: Exception) -> dict:
+    return {
+        **item,
+        "source_index": index,
+        "judge_classification": {
+            "classification": "JUDGE_ERROR",
+            "stage": stage,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        },
+        "judge_classification_label": "JUDGE_ERROR",
+        "judge_evaluation_mode": "judge_error",
+        "judge_evaluation": None,
+    }
+
+
+def evaluate_with_gemini(gemini_model, responses, prompt_bundle, config, checkpoint_path: str | Path | None = None):
     evaluations = []
+    completed_by_index = {}
+    if checkpoint_path is not None:
+        for record in load_jsonl_records(checkpoint_path):
+            if "source_index" in record:
+                completed_by_index[int(record["source_index"])] = record
+
     client, model_name = gemini_model
 
-    for item in tqdm(responses, desc="Evaluating with Gemini"):
-        classification = classify_question_context(
-            gemini_model,
-            prompt_bundle,
-            item["question"],
-            item["context"],
-        )
-        class_label = classification.get("classification", "UNKNOWN")
+    for index, item in enumerate(tqdm(responses, desc="Evaluating with Gemini")):
+        if index in completed_by_index:
+            evaluations.append(completed_by_index[index])
+            continue
 
-        evaluation_text = None
-        evaluation_mode = None
-
-        if class_label == "CLASS_1":
-            evaluation_mode = "PROMPT_QA_CLASS1"
-            prompt = render_answer_prompt(
-                prompt_bundle["class_1"],
+        try:
+            classification = classify_question_context(
+                gemini_model,
+                prompt_bundle,
                 item["question"],
                 item["context"],
-                item["generated_answer"],
             )
-            evaluation_text = generate_gemini_text(client, model_name, prompt)
-        elif class_label == "CLASS_2":
-            evaluation_mode = "PROMPT_QA_CLASS2"
-            prompt = render_answer_prompt(
-                prompt_bundle["class_2"],
-                item["question"],
-                item["context"],
-                item["generated_answer"],
-            )
-            evaluation_text = generate_gemini_text(client, model_name, prompt)
-        elif class_label == "CLASS_3":
-            evaluation_mode = "PROMPT_QA_CLASS3"
-            prompt = render_answer_prompt(
-                prompt_bundle["class_3"],
-                item["question"],
-                item["context"],
-                item["generated_answer"],
-            )
-            evaluation_text = generate_gemini_text(client, model_name, prompt)
-        else:
-            evaluation_mode = config["metrics"]["fallback_for_class_3"]
+            class_label = classification.get("classification", "UNKNOWN")
 
-        evaluations.append(
-            {
+            evaluation_text = None
+            evaluation_mode = None
+
+            if class_label == "CLASS_1":
+                evaluation_mode = "PROMPT_QA_CLASS1"
+                prompt = render_answer_prompt(
+                    prompt_bundle["class_1"],
+                    item["question"],
+                    item["context"],
+                    item["generated_answer"],
+                )
+                evaluation_text = generate_gemini_text(client, model_name, prompt)
+            elif class_label == "CLASS_2":
+                evaluation_mode = "PROMPT_QA_CLASS2"
+                prompt = render_answer_prompt(
+                    prompt_bundle["class_2"],
+                    item["question"],
+                    item["context"],
+                    item["generated_answer"],
+                )
+                evaluation_text = generate_gemini_text(client, model_name, prompt)
+            elif class_label == "CLASS_3":
+                evaluation_mode = "PROMPT_QA_CLASS3"
+                prompt = render_answer_prompt(
+                    prompt_bundle["class_3"],
+                    item["question"],
+                    item["context"],
+                    item["generated_answer"],
+                )
+                evaluation_text = generate_gemini_text(client, model_name, prompt)
+            else:
+                evaluation_mode = config["metrics"]["fallback_for_class_3"]
+
+            record = {
                 **item,
+                "source_index": index,
                 "judge_classification": classification,
                 "judge_classification_label": class_label,
                 "judge_evaluation_mode": evaluation_mode,
                 "judge_evaluation": evaluation_text,
             }
-        )
+        except Exception as exc:
+            record = judge_error_record(item, index, "evaluate_with_gemini", exc)
+
+        evaluations.append(record)
+        if checkpoint_path is not None:
+            append_jsonl_record(checkpoint_path, record)
 
     return evaluations
 

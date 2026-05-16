@@ -51,7 +51,10 @@ sinfo -o "%P %D %t %G"
 - `%D`: số node.
 - `%t`: trạng thái node.
 - `%G`: GPU/GRES có trên node, ví dụ `gpu:a100:4`.
-
+```bash
+sinfo -O "NodeList,GRES,GRESUsed"
+```
+xem node đã sử dụng bao nhiêu gpu
 ```bash
 squeue -u "$USER"
 ```
