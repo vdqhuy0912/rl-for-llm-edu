@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run Supervised Fine-Tuning (SFT) with LoRA/QLoRA on the configured Qwen model."""
 
+import argparse
+
 import torch
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import (
@@ -25,6 +27,16 @@ from src.utils.model_utils import (
     resolve_project_path,
     setup_logging,
 )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model-name", help="Override model.name from configs/sft_config.yaml.")
+    parser.add_argument("--output-dir", help="Override training.output_dir from configs/sft_config.yaml.")
+    parser.add_argument("--max-length", type=int, help="Override data.max_length.")
+    parser.add_argument("--per-device-train-batch-size", type=int, help="Override train batch size per device.")
+    parser.add_argument("--per-device-eval-batch-size", type=int, help="Override eval batch size per device.")
+    return parser.parse_args()
 
 
 def load_train_and_eval_datasets(config: dict, tokenizer):
@@ -83,7 +95,19 @@ def build_quantization_config(config: dict):
 
 
 def main():
+    args = parse_args()
     config = load_config("configs/sft_config.yaml")
+    if args.model_name:
+        config["model"]["name"] = args.model_name
+    if args.output_dir:
+        config["training"]["output_dir"] = args.output_dir
+    if args.max_length is not None:
+        config["data"]["max_length"] = args.max_length
+    if args.per_device_train_batch_size is not None:
+        config["training"]["per_device_train_batch_size"] = args.per_device_train_batch_size
+    if args.per_device_eval_batch_size is not None:
+        config["training"]["per_device_eval_batch_size"] = args.per_device_eval_batch_size
+
     logger = setup_logging(logger_name="train.sft")
 
     logger.info("Starting SFT training")
