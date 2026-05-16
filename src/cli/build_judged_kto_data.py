@@ -200,6 +200,7 @@ def convert_records(
     system_prompt: str | None,
     enable_thinking: bool,
     include_reference_positive: bool,
+    reference_positive_for_negative_only: bool,
 ) -> tuple[list[dict[str, Any]], Counter]:
     kto_rows = []
     stats = Counter()
@@ -214,6 +215,9 @@ def convert_records(
             continue
         if label is None:
             continue
+        if reference_positive_for_negative_only and decision != "negative":
+            stats[f"skipped.{decision}_not_negative_pair"] += 1
+            continue
 
         question = str(record.get("question") or "").strip()
         context = str(record.get("context") or "").strip()
@@ -221,6 +225,9 @@ def convert_records(
         reference_answer = str(record.get("reference_answer") or "").strip()
         if not question or not generated_answer:
             stats["skipped.missing_question_or_generated_answer"] += 1
+            continue
+        if reference_positive_for_negative_only and not reference_answer:
+            stats["skipped.missing_reference_answer_for_pair"] += 1
             continue
 
         prompt = build_instruction_prompt(
@@ -260,7 +267,7 @@ def convert_records(
         )
         stats[f"label.{label}"] += 1
 
-        if include_reference_positive and reference_answer:
+        if (include_reference_positive or reference_positive_for_negative_only) and reference_answer:
             reference_completion = build_completion(
                 question,
                 context,
@@ -308,6 +315,14 @@ def parse_args():
         action="store_true",
         help="Also add reference_answer as label=True for non-CLASS_3 judged samples.",
     )
+    parser.add_argument(
+        "--reference-positive-for-negative-only",
+        action="store_true",
+        help=(
+            "Build pair-derived KTO rows only from negative generated answers: "
+            "generated_answer label=False plus reference_answer label=True."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -333,6 +348,7 @@ def main():
         system_prompt=system_prompt,
         enable_thinking=enable_thinking,
         include_reference_positive=args.include_reference_positive,
+        reference_positive_for_negative_only=args.reference_positive_for_negative_only,
     )
 
     output_dir = ensure_output_dir(args.output_dir)

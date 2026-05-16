@@ -56,6 +56,61 @@ class AlternatingLabelSampler(Sampler[int]):
 
 
 class BalancedKTOTrainer(KTOTrainer):
+    def forward(self, model, batch):
+        KL_logps = self._compute_kl_logps(model, batch)
+
+        model_kwargs = (
+            {
+                "labels": batch["completion_labels"],
+                "decoder_input_ids": batch.get("completion_decoder_input_ids"),
+            }
+            if self.is_encoder_decoder
+            else {}
+        )
+        if self.aux_loss_enabled:
+            model_kwargs["output_router_logits"] = True
+
+        outputs = model(
+            batch["completion_input_ids"],
+            attention_mask=batch["completion_attention_mask"],
+            **model_kwargs,
+        )
+        completion_logits = outputs.logits
+        completion_logps = self.get_batch_logps(
+            completion_logits,
+            batch["completion_labels"],
+            average_log_prob=False,
+            is_encoder_decoder=self.is_encoder_decoder,
+            label_pad_token_id=self.label_pad_token_id,
+        )
+
+        if completion_logps.shape[0] != len(batch["label"]):
+            raise ValueError(
+                "There is a mismatch between the number of examples in this batch and the number of "
+                "examples for which an output sequence was predicted."
+            )
+
+        label_values = [bool(label) for label in batch["label"]]
+        chosen_idx = torch.tensor(
+            [index for index, label in enumerate(label_values) if label],
+            device=completion_logits.device,
+            dtype=torch.long,
+        )
+        rejected_idx = torch.tensor(
+            [index for index, label in enumerate(label_values) if not label],
+            device=completion_logits.device,
+            dtype=torch.long,
+        )
+
+        chosen_logps = completion_logps.index_select(0, chosen_idx)
+        rejected_logps = completion_logps.index_select(0, rejected_idx)
+        chosen_logits = completion_logits.index_select(0, chosen_idx)
+        rejected_logits = completion_logits.index_select(0, rejected_idx)
+
+        if self.aux_loss_enabled:
+            return (chosen_logps, rejected_logps, chosen_logits, rejected_logits, KL_logps, outputs.aux_loss)
+        return (chosen_logps, rejected_logps, chosen_logits, rejected_logits, KL_logps)
+
     def _get_train_sampler(self, dataset=None):
         train_dataset = dataset if dataset is not None else self.train_dataset
         if train_dataset is None or not hasattr(train_dataset, "__len__"):
@@ -63,6 +118,13 @@ class BalancedKTOTrainer(KTOTrainer):
         if "label" not in getattr(train_dataset, "column_names", []):
             return super()._get_train_sampler(dataset) if dataset is not None else super()._get_train_sampler()
         return AlternatingLabelSampler(list(train_dataset["label"]), seed=self.args.seed)
+
+    def _get_eval_sampler(self, eval_dataset):
+        if eval_dataset is None or not hasattr(eval_dataset, "__len__"):
+            return super()._get_eval_sampler(eval_dataset)
+        if "label" not in getattr(eval_dataset, "column_names", []):
+            return super()._get_eval_sampler(eval_dataset)
+        return AlternatingLabelSampler(list(eval_dataset["label"]), seed=self.args.seed + 10_000)
 
 
 def load_preconverted_kto_dataset(path: str) -> Dataset:
