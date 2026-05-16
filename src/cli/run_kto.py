@@ -34,6 +34,13 @@ def load_preconverted_kto_dataset(path: str) -> Dataset:
         raise ValueError(
             f"Preconverted KTO dataset at {resolved_path} is missing columns: {sorted(missing_columns)}"
         )
+
+    # TRL's KTO collator attempts to tensorize every column that survives its
+    # preprocessing. Keep metadata in the JSON preview files, but pass only the
+    # fields KTOTrainer needs into training.
+    extra_columns = [column for column in dataset.column_names if column not in required_columns]
+    if extra_columns:
+        dataset = dataset.remove_columns(extra_columns)
     return dataset
 
 
