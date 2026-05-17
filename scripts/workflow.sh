@@ -19,6 +19,7 @@ Usage:
   scripts/workflow.sh auto-metrics <generated_responses.json> <results_dir> [model_label]
   scripts/workflow.sh eval-model <model_label> <model_path> [split_name] [num_samples] [suite_dir]
   scripts/workflow.sh eval-model-suite [split_name] [num_samples] [suite_dir]
+  scripts/workflow.sh eval-report-suite [split_name] [num_samples] [suite_dir]
   scripts/workflow.sh build-report-artifacts [suite_dir] [output_dir]
   scripts/workflow.sh rerun-oom-judge <generated_responses.json> [evaluation_results.json] [results_dir] [model_path]
   scripts/workflow.sh eval-sft
@@ -220,6 +221,22 @@ run_eval_model_suite() {
   fi
 }
 
+run_eval_report_suite() {
+  if [[ $# -gt 3 ]]; then
+    usage
+    exit 1
+  fi
+
+  local split_name="${1:-test_only}"
+  local num_samples="${2:-}"
+  local suite_dir="${3:-${REPO_ROOT}/results/model_suite_report_test}"
+
+  run_eval_model "base_model" "Qwen/Qwen3-8B" "${split_name}" "${num_samples}" "${suite_dir}"
+  run_eval_model "sft" "${REPO_ROOT}/models/sft_checkpoints/final" "${split_name}" "${num_samples}" "${suite_dir}"
+  run_eval_model "kto" "${REPO_ROOT}/models/kto_base_violation_pair_checkpoints/final" "${split_name}" "${num_samples}" "${suite_dir}"
+  run_eval_model "kto_sft" "${REPO_ROOT}/models/kto_violation_pair_checkpoints/final" "${split_name}" "${num_samples}" "${suite_dir}"
+}
+
 run_build_report_artifacts() {
   if [[ $# -gt 2 ]]; then
     usage
@@ -286,6 +303,9 @@ case "${command_name}" in
     ;;
   eval-model-suite)
     run_eval_model_suite "$@"
+    ;;
+  eval-report-suite)
+    run_eval_report_suite "$@"
     ;;
   build-report-artifacts)
     run_build_report_artifacts "$@"
