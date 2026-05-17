@@ -88,7 +88,7 @@ def collect_loss_rows(train_dirs: list[str]) -> list[dict[str, Any]]:
             raise ValueError(f"Training dir spec must be label=path, got: {spec}")
         label, raw_path = spec.split("=", maxsplit=1)
         train_dir = resolve_project_path(raw_path)
-        state_path = train_dir / "trainer_state.json"
+        state_path = resolve_trainer_state_path(train_dir)
         if not state_path.exists():
             continue
         state = read_json(state_path)
@@ -101,6 +101,23 @@ def collect_loss_rows(train_dirs: list[str]) -> list[dict[str, Any]]:
             if "eval_loss" in item:
                 rows.append({"run": label, "step": step, "metric": "eval_loss", "value": item["eval_loss"]})
     return rows
+
+
+def resolve_trainer_state_path(train_dir: Path) -> Path:
+    direct_path = train_dir / "trainer_state.json"
+    if direct_path.exists():
+        return direct_path
+
+    def checkpoint_step(path: Path) -> int:
+        try:
+            return int(path.parent.name.rsplit("-", maxsplit=1)[1])
+        except (IndexError, ValueError):
+            return -1
+
+    checkpoint_paths = sorted(train_dir.glob("checkpoint-*/trainer_state.json"), key=checkpoint_step)
+    if checkpoint_paths:
+        return checkpoint_paths[-1]
+    return direct_path
 
 
 def collect_kto_signal_rows(kto_dirs: list[str]) -> list[dict[str, Any]]:
