@@ -112,6 +112,15 @@ def parse_json_object(text: str) -> dict:
         return json.loads(match.group(0))
 
 
+def is_cuda_out_of_memory(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return isinstance(exc, RuntimeError) and (
+        "out of memory" in message
+        or "cublas_status_alloc_failed" in message
+        or "cuda error: out of memory" in message
+    )
+
+
 def classify_question_context(gemini_model, prompts: dict, question: str, context: str) -> dict:
     client, model_name = gemini_model
     prompt = render_classifier_prompt(prompts["classifier"], question, context)
@@ -126,14 +135,21 @@ def classify_question_context(gemini_model, prompts: dict, question: str, contex
         }
 
 
-def generate_responses(model, tokenizer, dataset, config):
+def generate_responses(model, tokenizer, dataset, config, checkpoint_path: str | Path | None = None):
     prompt_config = config.get("prompt", {})
     system_prompt = prompt_config.get("system_prompt")
     enable_thinking = prompt_config.get("enable_thinking", False)
-    responses = []
     num_samples = min(config["evaluation"]["num_samples"], len(dataset))
     batch_size = max(1, int(config["evaluation"].get("batch_size", 1)))
+    current_batch_size = batch_size
     model.eval()
+    records_by_index = {}
+    if checkpoint_path is not None:
+        for record in load_jsonl_records(checkpoint_path):
+            if "source_index" in record:
+                source_index = int(record["source_index"])
+                if 0 <= source_index < num_samples:
+                    records_by_index[source_index] = record
 
     generation_config = copy.deepcopy(model.generation_config)
     generation_config.max_length = None
@@ -161,12 +177,37 @@ def generate_responses(model, tokenizer, dataset, config):
 
     model_device = next(model.parameters()).device
 
-    with torch.no_grad():
-        for start in tqdm(range(0, num_samples, batch_size), desc="Generating responses"):
+    def build_error_record(example: dict, index: int, exc: Exception) -> dict:
+        return {
+            "source_index": index,
+            "question": example["question"],
+            "context": example["context"],
+            "reference_answer": example["answer"],
+            "generated_answer": f"Error generating response: {exc}",
+            "insufficient_context": example["insufficient_context"],
+            "multi_intent": example["multi_intent"],
+        }
+
+    with torch.no_grad(), tqdm(
+        total=num_samples,
+        initial=len(records_by_index),
+        desc="Generating responses",
+    ) as progress:
+        sample_index = 0
+        while sample_index < num_samples:
+            if sample_index in records_by_index:
+                sample_index += 1
+                continue
+
+            batch_indices = [
+                index
+                for index in range(sample_index, min(sample_index + current_batch_size, num_samples))
+                if index not in records_by_index
+            ]
             batch_examples = []
             batch_prompts = []
 
-            for index in range(start, min(start + batch_size, num_samples)):
+            for index in batch_indices:
                 example = normalize_qa_example(dataset[index])
                 batch_examples.append(example)
                 batch_prompts.append(
@@ -195,34 +236,51 @@ def generate_responses(model, tokenizer, dataset, config):
                 )
                 prompt_length = inputs["input_ids"].shape[1]
 
-                for example, generated_ids in zip(batch_examples, output_ids):
+                for index, example, generated_ids in zip(batch_indices, batch_examples, output_ids):
                     generated_tokens = generated_ids[prompt_length:]
                     response = tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
-                    responses.append(
-                        {
-                            "question": example["question"],
-                            "context": example["context"],
-                            "reference_answer": example["answer"],
-                            "generated_answer": response,
-                            "insufficient_context": example["insufficient_context"],
-                            "multi_intent": example["multi_intent"],
-                        }
-                    )
+                    record = {
+                        "source_index": index,
+                        "question": example["question"],
+                        "context": example["context"],
+                        "reference_answer": example["answer"],
+                        "generated_answer": response,
+                        "insufficient_context": example["insufficient_context"],
+                        "multi_intent": example["multi_intent"],
+                    }
+                    records_by_index[index] = record
+                    if checkpoint_path is not None:
+                        append_jsonl_record(checkpoint_path, record)
+                progress.update(len(batch_indices))
+                while sample_index < num_samples and sample_index in records_by_index:
+                    sample_index += 1
             except Exception as exc:
-                error_message = f"Error generating response: {exc}"
-                for example in batch_examples:
-                    responses.append(
-                        {
-                            "question": example["question"],
-                            "context": example["context"],
-                            "reference_answer": example["answer"],
-                            "generated_answer": error_message,
-                            "insufficient_context": example["insufficient_context"],
-                            "multi_intent": example["multi_intent"],
-                        }
+                if is_cuda_out_of_memory(exc) and current_batch_size > 1:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    next_batch_size = max(1, current_batch_size // 2)
+                    print(
+                        f"CUDA OOM at generation batch_size={current_batch_size}; "
+                        f"retrying from sample {sample_index} with batch_size={next_batch_size}"
                     )
+                    current_batch_size = next_batch_size
+                    continue
 
-    return responses
+                if is_cuda_out_of_memory(exc) and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                error_message = f"Error generating response: {exc}"
+                print(error_message)
+                for index, example in zip(batch_indices, batch_examples):
+                    record = build_error_record(example, index, exc)
+                    records_by_index[index] = record
+                    if checkpoint_path is not None:
+                        append_jsonl_record(checkpoint_path, record)
+                progress.update(len(batch_indices))
+                while sample_index < num_samples and sample_index in records_by_index:
+                    sample_index += 1
+
+    return [records_by_index[index] for index in range(num_samples) if index in records_by_index]
 
 
 def load_jsonl_records(path: str | Path) -> list[dict]:

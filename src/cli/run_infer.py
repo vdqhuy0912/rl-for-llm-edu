@@ -3,6 +3,7 @@
 
 import argparse
 import os
+from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -30,6 +31,7 @@ def parse_args():
     parser.add_argument("--results-dir", help="Directory to write generated responses.")
     parser.add_argument("--split-name", help="Saved split name to use for generation.")
     parser.add_argument("--num-samples", type=int, help="Override number of samples to generate.")
+    parser.add_argument("--batch-size", type=int, help="Override generation batch size.")
     parser.add_argument("--max-new-tokens", type=int, help="Override max generated tokens per sample.")
     parser.add_argument(
         "--load-in-4bit",
@@ -60,6 +62,8 @@ def main():
     config = load_config("configs/eval_config.yaml")
     if args.num_samples is not None:
         config["evaluation"]["num_samples"] = args.num_samples
+    if args.batch_size is not None:
+        config["evaluation"]["batch_size"] = args.batch_size
     if args.max_new_tokens is not None:
         config["evaluation"]["max_new_tokens"] = args.max_new_tokens
     if args.load_in_4bit:
@@ -96,6 +100,7 @@ def main():
         config["evaluation"].get("temperature"),
         config["evaluation"].get("top_p"),
     )
+    logger.info("Requested generation batch size: %s", config["evaluation"].get("batch_size"))
 
     model = AutoModelForCausalLM.from_pretrained(model_path, **model_load_kwargs)
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -116,8 +121,11 @@ def main():
         )
         logger.info("Loaded dataset fallback split with %s samples", len(dataset))
 
-    responses = generate_responses(model, tokenizer, dataset, config)
-    json_path, _ = save_records(responses, args.results_dir or "./results", "generated_responses")
+    results_dir = Path(args.results_dir or "./results")
+    checkpoint_path = results_dir / "generated_responses.partial.jsonl"
+    logger.info("Incremental inference checkpoint: %s", checkpoint_path)
+    responses = generate_responses(model, tokenizer, dataset, config, checkpoint_path=checkpoint_path)
+    json_path, _ = save_records(responses, results_dir, "generated_responses")
     logger.info("Inference completed. Results saved to %s", json_path)
     print(f"Generated {len(responses)} responses")
     print(f"Results saved to: {json_path}")
