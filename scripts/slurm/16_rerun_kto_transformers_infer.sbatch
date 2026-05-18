@@ -30,19 +30,23 @@ EVAL_NUM_SAMPLES="${EVAL_NUM_SAMPLES:-1971}"
 SUITE_DIR="${SUITE_DIR:-${REPO_ROOT}/results/model_suite_report_test}"
 INFER_BATCH_SIZE="${INFER_BATCH_SIZE:-32}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-1024}"
+RESET_INFERENCE="${RESET_INFERENCE:-false}"
 
 echo "Transformers KTO inference suite dir: ${SUITE_DIR}"
 echo "Split: ${SPLIT_NAME}"
 echo "Samples: ${EVAL_NUM_SAMPLES}"
 echo "Initial generation batch size: ${INFER_BATCH_SIZE}"
 echo "Max new tokens: ${MAX_NEW_TOKENS}"
+echo "Reset inference outputs: ${RESET_INFERENCE}"
 
 run_infer() {
   local label="$1"
   local model_path="$2"
   local infer_dir="${SUITE_DIR}/${label}/inference"
 
-  rm -rf "${infer_dir}"
+  if [[ "${RESET_INFERENCE}" == "true" ]]; then
+    rm -rf "${infer_dir}"
+  fi
   mkdir -p "${infer_dir}"
 
   python -m src.cli.run_infer \
