@@ -89,6 +89,13 @@ def main():
         logger.info("Inference loading mode: 4-bit quantized")
     else:
         logger.info("Inference loading mode: standard precision")
+    logger.info(
+        "Generation config override: do_sample=%s max_new_tokens=%s temperature=%s top_p=%s",
+        config["evaluation"].get("do_sample"),
+        config["evaluation"].get("max_new_tokens"),
+        config["evaluation"].get("temperature"),
+        config["evaluation"].get("top_p"),
+    )
 
     model = AutoModelForCausalLM.from_pretrained(model_path, **model_load_kwargs)
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)

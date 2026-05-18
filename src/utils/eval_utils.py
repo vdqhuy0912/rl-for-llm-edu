@@ -154,6 +154,10 @@ def generate_responses(model, tokenizer, dataset, config):
         generation_config.temperature = None
         generation_config.top_p = None
         generation_config.top_k = None
+    generation_kwargs = {
+        "generation_config": generation_config,
+        "do_sample": bool(config["evaluation"]["do_sample"]),
+    }
 
     model_device = next(model.parameters()).device
 
@@ -187,7 +191,7 @@ def generate_responses(model, tokenizer, dataset, config):
             try:
                 output_ids = model.generate(
                     **inputs,
-                    generation_config=generation_config,
+                    **generation_kwargs,
                 )
                 prompt_length = inputs["input_ids"].shape[1]
 
